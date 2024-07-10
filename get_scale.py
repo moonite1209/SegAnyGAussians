@@ -118,7 +118,7 @@ if __name__ == '__main__':
 
         rendered_pkg = gaussian_renderer.render_with_depth(view, scene_gaussians, pipeline.extract(args), background)
 
-        depth = rendered_pkg['depth']
+        depth = rendered_pkg['depth'] # pixel-wise
 
         # plt.imshow(depth.detach().cpu().squeeze().numpy())
         corresponding_masks = images_masks[view.image_name]
@@ -129,7 +129,7 @@ if __name__ == '__main__':
 
         grid_index = generate_grid_index(depth)
 
-        points_in_3D = torch.zeros(depth.shape[0], depth.shape[1], 3).cpu()
+        points_in_3D = torch.zeros(depth.shape[0], depth.shape[1], 3).cpu() # pixel-wise 相机坐标系
         points_in_3D[:,:,-1] = depth
 
         # caluculate cx cy fx fy with FoVx FoVy
@@ -156,6 +156,6 @@ if __name__ == '__main__':
             
             point_in_3D_in_mask = points_in_3D[eroded_masks[mask_id] == 1]
 
-            scale[mask_id] = (point_in_3D_in_mask.std(dim=0) * 2).norm()
+            scale[mask_id] = (point_in_3D_in_mask.std(dim=0) * 2).norm() # 对应论文公式(2)
 
         torch.save(scale, os.path.join(OUTPUT_DIR, view.image_name + '.pt'))
