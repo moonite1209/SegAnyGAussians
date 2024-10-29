@@ -158,4 +158,4 @@ if __name__ == '__main__':
 
             scale[mask_id] = (point_in_3D_in_mask.std(dim=0) * 2).norm() # 对应论文公式(2)
 
-        torch.save(scale, os.path.join(OUTPUT_DIR, view.image_name + '.pt'))
+        torch.save(scale, os.path.join(OUTPUT_DIR, view.image_name + '.pt')) # float[masks]

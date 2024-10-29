@@ -76,4 +76,4 @@ if __name__ == '__main__':
                 mask_list.append(m_score.bool())
         masks = torch.stack(mask_list, dim=0)
 
-        torch.save(masks, os.path.join(OUTPUT_DIR, name+'.pt'))
+        torch.save(masks, os.path.join(OUTPUT_DIR, name+'.pt')) # bool[masks, h, w]

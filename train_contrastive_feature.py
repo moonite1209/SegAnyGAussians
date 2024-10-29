@@ -151,9 +151,9 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             mask_scales = viewpoint_cam.mask_scales.cuda()
 
             mask_scales, sort_indices = torch.sort(mask_scales, descending=True)
-            sam_masks = sam_masks[sort_indices, :, :]
+            sam_masks = sam_masks[sort_indices, :, :] # scale descending mask list bool[masks, h, w]
 
-            num_sampled_scales = 8
+            num_sampled_scales = 8 # 8+2=10 scale pivot
 
             sampled_scale_index = torch.randperm(len(mask_scales))[:num_sampled_scales]
 
@@ -165,7 +165,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             sampled_scale_index = tmp.long()
             
 
-            sampled_scales = mask_scales[sampled_scale_index]
+            sampled_scales = mask_scales[sampled_scale_index] # 10 scale pivot
 
             second_big_scale = mask_scales[mask_scales < upper_bound_scale].max()
 
@@ -174,17 +174,17 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             sampled_ray = torch.rand(sam_masks.shape[-2], sam_masks.shape[-1]).cuda() < ray_sample_rate
             non_mask_region = sam_masks.sum(dim = 0) == 0
 
-            sampled_ray = torch.logical_and(sampled_ray, ~non_mask_region)
+            sampled_ray = torch.logical_and(sampled_ray, ~non_mask_region) # sampled pixel mask
 
             # H W
-            per_pixel_mask_size = sam_masks * sam_masks.sum(-1).sum(-1)[:,None,None]
+            per_pixel_mask_size = sam_masks * sam_masks.sum(-1).sum(-1)[:,None,None] # mask fill with size, [masks, h, w]
 
-            per_pixel_mean_mask_size = per_pixel_mask_size.sum(dim = 0) / (sam_masks.sum(dim = 0) + 1e-9)
+            per_pixel_mean_mask_size = per_pixel_mask_size.sum(dim = 0) / (sam_masks.sum(dim = 0) + 1e-9) # float[h, w]
 
-            per_pixel_mean_mask_size = per_pixel_mean_mask_size[sampled_ray]
+            per_pixel_mean_mask_size = per_pixel_mean_mask_size[sampled_ray] # sampled pixel mean mask size, float[sampled pixels]
 
 
-            pixel_to_pixel_mask_size = per_pixel_mean_mask_size.unsqueeze(0) * per_pixel_mean_mask_size.unsqueeze(1)
+            pixel_to_pixel_mask_size = per_pixel_mean_mask_size.unsqueeze(0) * per_pixel_mean_mask_size.unsqueeze(1) # float[1, sampled pixels] * float[sampled pixels, 1] -> float[sampled pixels, sampled pixels]
             ptp_max_size = pixel_to_pixel_mask_size.max()
             pixel_to_pixel_mask_size[pixel_to_pixel_mask_size == 0] = 1e10
             per_pixel_weight = torch.clamp(ptp_max_size / pixel_to_pixel_mask_size, 1.0, None)
