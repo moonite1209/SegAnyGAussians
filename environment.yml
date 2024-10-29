@@ -14,6 +14,7 @@ dependencies:
   - tqdm
   - hdbscan
   - matplotlib
+  - pytorch3d::pytorch3d
   - pip:
     - submodules/diff-gaussian-rasterization
     - submodules/diff-gaussian-rasterization_contrastive_f
