@@ -16,7 +16,7 @@ def sam_masks_rgb():
         segmentmap=torch.full(masks[0].shape, -1).cuda()
         for idx, mask in enumerate(masks):
             segmentmap[mask]=idx
-        save_image(colormap[segmentmap].permute(2,0,1).cpu(), os.path.join(dpath, masks_name.split('.')[0], 'jpg'))
+        save_image(colormap[segmentmap].permute(2,0,1).cpu(), os.path.join(dpath, masks_name.split('.')[0], '.jpg'))
 
 
 
