@@ -48,7 +48,7 @@ class CONFIG:
     dt_gamma = 0.2
 
     # gaussian model
-    sh_degree = 3
+    sh_degree = 0
 
     convert_SHs_python = False
     compute_cov3D_python = False
