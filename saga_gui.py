@@ -404,7 +404,7 @@ class GaussianSplattingGUI:
             if not dpg.is_item_focused("_primary_window"):
                 return
             delta = app_data
-            self.camera.scale(delta)
+            self.camera.scale(delta*10)
             self.update_camera = True
             if self.debug:
                 dpg.set_value("_log_pose", str(self.camera.pose))
@@ -430,7 +430,7 @@ class GaussianSplattingGUI:
                 dx = self.mouse_pos[0] - pos[0]
                 dy = self.mouse_pos[1] - pos[1]
                 if dx != 0.0 or dy != 0.0:
-                    self.camera.pan(-dx*20, dy*20)
+                    self.camera.pan(-dx*200, dy*200)
                     self.update_camera = True
             
             self.mouse_pos = pos
@@ -522,16 +522,22 @@ class GaussianSplattingGUI:
         # except:
         #     pass
         point_features = self.engine['feature'].get_point_features
+        point_xyz = self.engine['feature'].get_xyz
+        print(point_features.shape, point_xyz.shape)
 
         scale_conditioned_point_features = torch.nn.functional.normalize(point_features, dim = -1, p = 2) * self.gates.unsqueeze(0)
 
         normed_point_features = torch.nn.functional.normalize(scale_conditioned_point_features, dim = -1, p = 2)
+        # normed_point_xyz = point_xyz
+        # normed_point_xyz = torch.nn.functional.normalize(point_xyz, dim = 0, p = 2)
+        normed_point_xyz = 5*point_xyz / (point_xyz.abs().max())
+        normed_point_features = torch.cat((normed_point_features, normed_point_xyz), dim=-1)
+        sampled_index = torch.rand(normed_point_features.shape[0]) > 0.98
+        normed_sampled_point_features = normed_point_features[sampled_index]
 
-        sampled_point_features = scale_conditioned_point_features[torch.rand(scale_conditioned_point_features.shape[0]) > 0.98]
+        # normed_sampled_point_features = sampled_point_features / torch.norm(sampled_point_features, dim = -1, keepdim = True)
 
-        normed_sampled_point_features = sampled_point_features / torch.norm(sampled_point_features, dim = -1, keepdim = True)
-
-        clusterer = HDBSCAN(min_cluster_size=10, cluster_selection_epsilon=0.01, allow_single_cluster = False)
+        clusterer = HDBSCAN(min_cluster_size=10, cluster_selection_epsilon=0.01, allow_single_cluster = False) # HDBSCAN
 
         cluster_labels = clusterer.fit_predict(normed_sampled_point_features.detach().cpu().numpy())
 
@@ -540,6 +546,12 @@ class GaussianSplattingGUI:
             cluster_centers[i] = torch.nn.functional.normalize(normed_sampled_point_features[cluster_labels == i-1].mean(dim = 0), dim = -1)
 
         self.seg_score = torch.einsum('nc,bc->bn', cluster_centers.cpu(), normed_point_features.cpu())
+        self.point_labels = self.seg_score.argmax(dim = -1)
+        def filter3d(pos, label):
+            print('begin filter3d')
+            assert pos.shape[0] == label.shape[0]
+
+            print('finish filter3d')
         self.cluster_point_colors = self.label_to_color[self.seg_score.argmax(dim = -1).cpu().numpy()]
         # self.cluster_point_colors[self.seg_score.max(dim = -1)[0].detach().cpu().numpy() < 0.5] = (0,0,0)
 
@@ -580,6 +592,7 @@ class GaussianSplattingGUI:
             self.cluster_in_3D()
             print("Clustering finished.")
         self.rendered_cluster = None if self.cluster_point_colors is None else render(view_camera, self.engine['scene'], self.opt, self.bg_color, override_color=torch.from_numpy(self.cluster_point_colors).cuda().float())["render"].permute(1, 2, 0)
+
         # --- RGB image --- #
         img = scene_outputs["render"].permute(1, 2, 0)  #
 
@@ -711,6 +724,11 @@ class GaussianSplattingGUI:
             if self.rendered_cluster is None:
                 self.render_buffer = rgb_score.cpu().numpy().reshape(-1) if self.render_buffer is None else self.render_buffer + rgb_score.cpu().numpy().reshape(-1)
             else:
+                # print(f'self.rendered_cluster.shape={self.rendered_cluster.shape}') # [600, 1080, 3]
+                def filter2d(map: torch.Tensor):
+                    res = cv2.blur(map.cpu().numpy(), (5,5))
+                    return torch.from_numpy(res).cuda()
+                # self.rendered_cluster = filter2d(self.rendered_cluster)
                 self.render_buffer = self.rendered_cluster.cpu().numpy().reshape(-1) if self.render_buffer is None else self.render_buffer + self.rendered_cluster.cpu().numpy().reshape(-1)
             
             render_num += 1
