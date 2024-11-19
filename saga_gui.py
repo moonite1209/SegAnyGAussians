@@ -24,6 +24,7 @@ from scene.cameras import Camera
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 
 from scipy.spatial.transform import Rotation as R
+from scipy.spatial.kdtree import KDTree
 
 # from cuml.cluster.hdbscan import HDBSCAN
 from hdbscan import HDBSCAN
@@ -530,8 +531,8 @@ class GaussianSplattingGUI:
         normed_point_features = torch.nn.functional.normalize(scale_conditioned_point_features, dim = -1, p = 2)
         # normed_point_xyz = point_xyz
         # normed_point_xyz = torch.nn.functional.normalize(point_xyz, dim = 0, p = 2)
-        normed_point_xyz = 5*point_xyz / (point_xyz.abs().max())
-        normed_point_features = torch.cat((normed_point_features, normed_point_xyz), dim=-1)
+        # normed_point_xyz = 5*point_xyz / (point_xyz.abs().max())
+        # normed_point_features = torch.cat((normed_point_features, normed_point_xyz), dim=-1)
         sampled_index = torch.rand(normed_point_features.shape[0]) > 0.98
         normed_sampled_point_features = normed_point_features[sampled_index]
 
@@ -550,8 +551,27 @@ class GaussianSplattingGUI:
         def filter3d(pos, label):
             print('begin filter3d')
             assert pos.shape[0] == label.shape[0]
-
+            pos=pos.detach().cpu().numpy()
+            label=label.detach().cpu().numpy()
+            kdtree = KDTree(pos)
+            for i,p in enumerate(pos):
+                d, index = kdtree.query(x=p, k=16)
+                assert i == index[0]
+                index = index[1:]
+                bin = []
+                counts = []
+                for l in label[index]:
+                    try:
+                        counts[bin.index(l)]+=1
+                    except:
+                        bin.append(l)
+                        counts.append(1)
+                if len(counts)==len(index):
+                    continue
+                label[i]=bin[counts.index(max(counts))]
             print('finish filter3d')
+            return torch.from_numpy(label).cuda()
+        self.point_labels = filter3d(point_xyz, self.point_labels)
         self.cluster_point_colors = self.label_to_color[self.seg_score.argmax(dim = -1).cpu().numpy()]
         # self.cluster_point_colors[self.seg_score.max(dim = -1)[0].detach().cpu().numpy() < 0.5] = (0,0,0)
 
