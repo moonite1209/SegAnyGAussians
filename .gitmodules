@@ -4,9 +4,3 @@
 [submodule "third_party/segment-anything"]
 	path = third_party/segment-anything
 	url = https://github.com/facebookresearch/segment-anything.git
-[submodule "submodules/torch_kdtree"]
-	path = submodules/torch_kdtree
-	url = https://github.com/thomgrand/torch_kdtree.git
-[submodule "submodules/torch_kdtree_0"]
-	path = submodules/torch_kdtree_0
-	url = https://github.com/Karbo123/torch_kdtree.git

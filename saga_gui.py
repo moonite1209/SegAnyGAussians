@@ -553,10 +553,13 @@ class GaussianSplattingGUI:
             assert pos.shape[0] == label.shape[0]
             pos=pos.detach().cpu().numpy()
             label=label.detach().cpu().numpy()
+            new_label = []
             kdtree = KDTree(pos)
             for i,p in enumerate(pos):
-                d, index = kdtree.query(x=p, k=16)
+                d, index = kdtree.query(x=p, k=1000)
                 assert i == index[0]
+                print(f'query index {index[1:]} for {index[0]}')
+                print(f'query label {label[index[1:]].tolist()} for {label[index[0]].tolist()}')
                 index = index[1:]
                 bin = []
                 counts = []
@@ -566,11 +569,10 @@ class GaussianSplattingGUI:
                     except:
                         bin.append(l)
                         counts.append(1)
-                if len(counts)==len(index):
-                    continue
-                label[i]=bin[counts.index(max(counts))]
+                print(f'{bin}\n{counts}')
+                new_label.append(bin[counts.index(max(counts))])
             print('finish filter3d')
-            return torch.from_numpy(label).cuda()
+            return torch.tensor(new_label).cuda()
         self.point_labels = filter3d(point_xyz, self.point_labels)
         self.cluster_point_colors = self.label_to_color[self.seg_score.argmax(dim = -1).cpu().numpy()]
         # self.cluster_point_colors[self.seg_score.max(dim = -1)[0].detach().cpu().numpy() < 0.5] = (0,0,0)

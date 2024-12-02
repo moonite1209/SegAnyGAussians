@@ -1,0 +1,22 @@
+torch==2.4.1+cu118
+torchvision==0.19.1+cu118
+torchaudio==2.4.1+cu118
+plyfile
+tqdm
+opencv-python
+tensorboard
+matplotlib
+transformers
+scikit-learn
+umap-learn
+dearpygui
+hdbscan
+open-clip-torch
+joblib
+submodules/diff-gaussian-rasterization
+submodules/diff-gaussian-rasterization_contrastive_f
+submodules/diff-gaussian-rasterization-depth
+submodules/simple-knn
+third_party/segment-anything
+git+https://github.com/facebookresearch/pytorch3d.git@stable
+--extra-index-url https://download.pytorch.org/whl/cu118
