@@ -24,7 +24,7 @@ from scene.cameras import Camera
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 
 from scipy.spatial.transform import Rotation as R
-from scipy.spatial.kdtree import KDTree
+from scipy.spatial import KDTree
 
 # from cuml.cluster.hdbscan import HDBSCAN
 from hdbscan import HDBSCAN
@@ -531,7 +531,7 @@ class GaussianSplattingGUI:
         normed_point_features = torch.nn.functional.normalize(scale_conditioned_point_features, dim = -1, p = 2)
         # normed_point_xyz = point_xyz
         # normed_point_xyz = torch.nn.functional.normalize(point_xyz, dim = 0, p = 2)
-        # normed_point_xyz = 5*point_xyz / (point_xyz.abs().max())
+        # normed_point_xyz = 20*point_xyz / (point_xyz.abs().max())
         # normed_point_features = torch.cat((normed_point_features, normed_point_xyz), dim=-1)
         sampled_index = torch.rand(normed_point_features.shape[0]) > 0.98
         normed_sampled_point_features = normed_point_features[sampled_index]
@@ -556,10 +556,10 @@ class GaussianSplattingGUI:
             new_label = []
             kdtree = KDTree(pos)
             for i,p in enumerate(pos):
-                d, index = kdtree.query(x=p, k=1000)
+                d, index = kdtree.query(x=p, k=512)
                 assert i == index[0]
-                print(f'query index {index[1:]} for {index[0]}')
-                print(f'query label {label[index[1:]].tolist()} for {label[index[0]].tolist()}')
+                # print(f'query index {index[1:]} for {index[0]}')
+                # print(f'query label {label[index[1:]].tolist()} for {label[index[0]].tolist()}')
                 index = index[1:]
                 bin = []
                 counts = []
@@ -569,12 +569,12 @@ class GaussianSplattingGUI:
                     except:
                         bin.append(l)
                         counts.append(1)
-                print(f'{bin}\n{counts}')
+                # print(f'{bin}\n{counts}')
                 new_label.append(bin[counts.index(max(counts))])
             print('finish filter3d')
             return torch.tensor(new_label).cuda()
         self.point_labels = filter3d(point_xyz, self.point_labels)
-        self.cluster_point_colors = self.label_to_color[self.seg_score.argmax(dim = -1).cpu().numpy()]
+        self.cluster_point_colors = self.label_to_color[self.point_labels.detach().cpu().numpy()]
         # self.cluster_point_colors[self.seg_score.max(dim = -1)[0].detach().cpu().numpy() < 0.5] = (0,0,0)
 
 
@@ -583,7 +583,7 @@ class GaussianSplattingGUI:
         mean = torch.mean(X, dim=0)
         X = X - mean
         covariance_matrix = (1 / n) * torch.matmul(X.T, X).float()  # An old torch bug: matmul float32->float16, 
-        eigenvalues, eigenvectors = torch.eig(covariance_matrix, eigenvectors=True)
+        eigenvalues, eigenvectors = torch.linalg.eig(covariance_matrix)
         eigenvalues = torch.norm(eigenvalues, dim=1)
         idx = torch.argsort(-eigenvalues)
         eigenvectors = eigenvectors[:, idx]
@@ -599,7 +599,8 @@ class GaussianSplattingGUI:
         randint = torch.randint(0, N, [200_000])
         sems /= (torch.norm(sems, dim=1, keepdim=True) + 1e-6)
         sem_chosen = sems[randint, :]
-        self.proj_mat = self.pca(sem_chosen, n_components=3)
+        self.proj_mat = PCA(n_components=3)
+        self.proj_mat.fit(sem_chosen.detach().cpu())
         print("project mat initialized !")
 
 
@@ -625,7 +626,7 @@ class GaussianSplattingGUI:
         sems = feature_outputs["render"].permute(1, 2, 0)
         H, W, C = sems.shape
         sems /= (torch.norm(sems, dim=-1, keepdim=True) + 1e-6)
-        sem_transed = sems @ self.proj_mat
+        sem_transed = torch.from_numpy(self.proj_mat.transform(sems.flatten(0,1).detach().cpu())).cuda().reshape(H,W,-1)
         sem_transed_rgb = torch.clip(sem_transed*0.5+0.5, 0, 1)
 
         scale = dpg.get_value('_Scale')
