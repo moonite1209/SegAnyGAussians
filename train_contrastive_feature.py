@@ -188,14 +188,14 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             ptp_max_size = pixel_to_pixel_mask_size.max()
             pixel_to_pixel_mask_size[pixel_to_pixel_mask_size == 0] = 1e10
             per_pixel_weight = torch.clamp(ptp_max_size / pixel_to_pixel_mask_size, 1.0, None)
-            per_pixel_weight = (per_pixel_weight - per_pixel_weight.min()) / (per_pixel_weight.max() - per_pixel_weight.min()) * 9. + 1.
+            per_pixel_weight = (per_pixel_weight - per_pixel_weight.min()) / (per_pixel_weight.max() - per_pixel_weight.min()) * 9. + 1. # float[sampled pixels, sampled pixels]
             
             sam_masks_sampled_ray = sam_masks[:, sampled_ray]
 
             gt_corrs = []
 
             sampled_scales[0] = upper_bound_scale + upper_bound_scale * torch.rand(1)[0]
-            for idx, si in enumerate(sampled_scale_index):
+            for idx, si in enumerate(sampled_scale_index): # 公式(6)
                 upper_bound = sampled_scales[idx] >= upper_bound_scale
 
                 if si != len(mask_scales) - 1 and not upper_bound:
@@ -214,16 +214,16 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
                         )
                     gt_vec[si+1:,:] = sam_masks_sampled_ray[si+1:,:]
                 else:
-                    gt_vec = sam_masks_sampled_ray
+                    gt_vec = sam_masks_sampled_ray # float[masks, sampled pixels], a pixel belong to a mask
 
                 gt_corr = torch.einsum('nh,nj->hj', gt_vec, gt_vec)
-                gt_corr[gt_corr != 0] = 1
+                gt_corr[gt_corr != 0] = 1 # float[sampled pixels, sampled pixels], a pixel in the same mask with another pixel
                 gt_corrs.append(gt_corr)
 
             # N_scale S C_clip
             # gt_clip_features = torch.stack(gt_clip_features, dim = 0)
             # N_scale S S
-            gt_corrs = torch.stack(gt_corrs, dim = 0)
+            gt_corrs = torch.stack(gt_corrs, dim = 0) # float[scale pivots, sampled pixels, sampled pixels]
 
             sampled_scales = q_trans(sampled_scales).squeeze()
             sampled_scales = sampled_scales.squeeze()
@@ -232,7 +232,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         rendered_features = render_pkg_feat["render"]
 
         rendered_feature_norm = rendered_features.norm(dim = 0, p=2).mean()
-        rendered_feature_norm_reg = (1-rendered_feature_norm)**2
+        rendered_feature_norm_reg = (1-rendered_feature_norm)**2 # regularization term, keep aligned on a ray
 
         rendered_features = torch.nn.functional.interpolate(rendered_features.unsqueeze(0), viewpoint_cam.original_masks.shape[-2:], mode='bilinear').squeeze(0)
 
