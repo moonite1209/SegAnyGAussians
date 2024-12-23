@@ -38,7 +38,7 @@ def test_clip():
     from PIL import Image
     import cv2
     device = 'cuda'
-    def get_entity():
+    def get_entity(image):
         sam = sam_model_registry['vit_h'](checkpoint='./third_party/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth').to(device)
         mask_generator = SamAutomaticMaskGenerator(
             model=sam,
@@ -50,7 +50,6 @@ def test_clip():
             crop_n_points_downscale_factor=1,
             min_mask_region_area=100,
         )
-        image = Image.open('data/temp/nanfeng/images/00000000001-00000001113-A01113.jpg')
         records = mask_generator.generate(np.array(image))
         def get_bbox(mask: np.ndarray):
             # 查找掩码中的 True 元素的索引
@@ -84,9 +83,9 @@ def test_clip():
                 paded_img[(w-h)//2:(w-h)//2 + h, :, :] = image
             paded_img = cv2.resize(paded_img, (224,224))
             return paded_img
-        
+        masks = [record['segmentation'] for record in records]
         entity = [get_entity_image(np.array(image), record['segmentation']) for record in records]
-        return np.stack(entity)
+        return torch.from_numpy(np.stack(entity)), torch.from_numpy(np.stack(masks))
 
     def get_semantics(entity):
         clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch16").to(device)
@@ -94,14 +93,70 @@ def test_clip():
         inputs = clip_processor(images=entity, return_tensors='pt')
         inputs = inputs.to(clip_model.device)
         semantics = clip_model.get_image_features(**inputs)
-        semantics = F.normalize(semantics,dim=-1).detach().cpu().numpy()
+        semantics = F.normalize(semantics,dim=-1).detach().cpu()
         return semantics
+    
+    def get_relevancy_map(entity, masks, semantics, ptexts, ntexts):
+        def get_semantic_map(masks: torch.Tensor, semantics):
+            semantic_map = torch.full(masks.shape[1:3], -1, dtype=torch.int64)
+            semantics = torch.concat((semantics, torch.zeros((1, semantics.shape[-1]))), dim=0)
+            for index, mask in enumerate(masks):
+                semantic_map[mask] = index
+            return semantics[semantic_map]
+        def get_relevancy(raw_semantic_map: torch.Tensor, pembed: torch.Tensor, nembed: torch.Tensor):
+            s = raw_semantic_map.shape[:-1]
+            c = raw_semantic_map.shape[-1]
+            raw_semantics = raw_semantic_map.flatten(0, -2)
+            psim=pembed@raw_semantics.T # (p, i)
+            nsim=nembed@raw_semantics.T # (n, i)
+            nsim=nsim.unsqueeze(0).repeat_interleave(pembed.shape[0],dim=0) # (p, n ,i)
+            psim=psim.unsqueeze(1).repeat_interleave(nembed.shape[0],dim=1) # (p, n, i)
+            sim=torch.stack((psim,nsim), dim=-1) # (p, n, i, 2)
+            sim=torch.softmax(10*sim, dim=-1) # (p, n, i, 2)
+            sim, indice = sim[...,0].min(dim=1) # (p, i)
+            return sim.unflatten(1, s)
 
-    entity = get_entity()
-    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-        semantics = get_semantics(entity)
-    np.save('entity.npy', entity)
-    np.save('semantics.npy', semantics)
+        semantic_map = get_semantic_map(masks, semantics)
+        clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch16").to(device)
+        clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch16")
+        
+        pembed = clip_processor(text=ptexts, return_tensors='pt', padding=True)
+        pembed = pembed.to(clip_model.device)
+        pembed = clip_model.get_text_features(**pembed)
+        pembed = F.normalize(pembed, dim=-1).detach().cpu()
+
+        nembed = clip_processor(text=ntexts, return_tensors='pt', padding=True)
+        nembed = nembed.to(clip_model.device)
+        nembed = clip_model.get_text_features(**nembed)
+        nembed = F.normalize(nembed, dim=-1).detach().cpu()
+
+        relevancy_map = get_relevancy(semantic_map, pembed, nembed)
+        return relevancy_map
+
+
+    image = Image.open('data/temp/nanfeng/images/00000000001-00000001113-A01113.jpg')
+    # entity, masks = get_entity(image)
+    # with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+    #     semantics = get_semantics(entity)
+    # torch.save(entity, 'temp/entity.pth')
+    # torch.save(masks, 'temp/masks.pth')
+    # torch.save(semantics, 'temp/semantics.pth')
+
+    entity = torch.load('temp/entity.pth')
+    masks = torch.load('temp/masks.pth')
+    semantics = torch.load('temp/semantics.pth')
+
+    ptexts = ['house', 'pavilion', 'tree', 'vegetable field', 'car', 'pool']
+    # with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+    #     relevancy_map = get_relevancy_map(entity, masks, semantics, ptexts, ["object", "things", "stuff", "texture"])
+    # torch.save(relevancy_map, 'temp/relevancy_map.pth')
+
+    relevancy_map = torch.load('temp/relevancy_map.pth')
+    for ptext, map in zip(ptexts, relevancy_map):
+        img=torch.from_numpy(np.array(image)).permute(2,0,1)
+        img = (img*(map>0.5)).permute(1,2,0)
+        Image.fromarray(img.numpy()).save(f'temp/{ptext}.jpg')
+
 
 
 def main():
