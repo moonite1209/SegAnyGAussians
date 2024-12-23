@@ -98,7 +98,8 @@ def test_clip():
         return semantics
 
     entity = get_entity()
-    semantics = get_semantics(entity)
+    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+        semantics = get_semantics(entity)
     np.save('entity.npy', entity)
     np.save('semantics.npy', semantics)
 
