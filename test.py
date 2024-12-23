@@ -38,8 +38,6 @@ def test_clip():
     from PIL import Image
     import cv2
     device = 'cuda'
-    clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch16").to(device)
-    clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch16")
     sam = sam_model_registry['vit_h'](checkpoint='./third_party/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth').to(device)
     mask_generator = SamAutomaticMaskGenerator(
         model=sam,
@@ -87,11 +85,14 @@ def test_clip():
         return paded_img
     
     entity = [get_entity_image(np.array(image), record['segmentation']) for record in records]
+    del records, mask_generator, sam
+    clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch16").to(device)
+    clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch16")
     inputs = clip_processor(images=entity, return_tensors='pt')
     inputs = inputs.to(clip_model.device)
     semantics = clip_model.get_image_features(**inputs)
     semantics = F.normalize(semantics,dim=-1).detach().cpu().numpy()
-    np.save('entity.npy', entity)
+    np.save('entity.npy', np.stack(entity))
     np.save('semantics.npy', semantics)
 
 
