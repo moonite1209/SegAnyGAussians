@@ -188,7 +188,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             ptp_max_size = pixel_to_pixel_mask_size.max()
             pixel_to_pixel_mask_size[pixel_to_pixel_mask_size == 0] = 1e10
             per_pixel_weight = torch.clamp(ptp_max_size / pixel_to_pixel_mask_size, 1.0, None)
-            per_pixel_weight = (per_pixel_weight - per_pixel_weight.min()) / (per_pixel_weight.max() - per_pixel_weight.min()) * 9. + 1. # float[sampled pixels, sampled pixels]
+            per_pixel_weight = (per_pixel_weight - per_pixel_weight.min()) / (per_pixel_weight.max() - per_pixel_weight.min()) * 9. + 1. # pixel的平均mask size越大其权重越小, float[sampled pixels, sampled pixels]
             
             sam_masks_sampled_ray = sam_masks[:, sampled_ray]
 
@@ -224,7 +224,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             # gt_clip_features = torch.stack(gt_clip_features, dim = 0)
             # N_scale S S
             gt_corrs = torch.stack(gt_corrs, dim = 0) # float[scale pivots, sampled pixels, sampled pixels]
-
+            # sampled_scales normalization to [0, 1]
             sampled_scales = q_trans(sampled_scales).squeeze()
             sampled_scales = sampled_scales.squeeze()
 
@@ -236,29 +236,29 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
 
         rendered_features = torch.nn.functional.interpolate(rendered_features.unsqueeze(0), viewpoint_cam.original_masks.shape[-2:], mode='bilinear').squeeze(0)
 
-        # N_sampled_scales 32
+        # float[sampled_scales, 32]
         if scale_aware_dim <= 0 or scale_aware_dim >= 32:
             gates = scale_gate(sampled_scales.unsqueeze(-1))
         else:
             int_sampled_scales = ((1 - sampled_scales.squeeze()) * scale_aware_dim).long()
             gates = fixed_scale_gate[int_sampled_scales].detach()
 
-        # N_sampled_scales C H W
+        # float[sampled_scales, C, H, W]
         feature_with_scale = rendered_features.unsqueeze(0).repeat([sampled_scales.shape[0],1,1,1])
-        feature_with_scale = feature_with_scale * gates.unsqueeze(-1).unsqueeze(-1)
+        feature_with_scale = feature_with_scale * gates.unsqueeze(-1).unsqueeze(-1) # element-wise mul
 
-        sampled_feature_with_scale = feature_with_scale[:,:,sampled_ray]
+        sampled_feature_with_scale = feature_with_scale[:,:,sampled_ray] # float[sampled scales, C, sampled pixels]
 
-        scale_conditioned_features_sam = sampled_feature_with_scale.permute([0,2,1])
+        scale_conditioned_features_sam = sampled_feature_with_scale.permute([0,2,1]) # float[sampled scales, sampled pixels, C]
 
         scale_conditioned_features_sam = torch.nn.functional.normalize(scale_conditioned_features_sam, dim=-1, p=2)
-        corr = torch.einsum('nhc,njc->nhj', scale_conditioned_features_sam, scale_conditioned_features_sam)
+        corr = torch.einsum('nhc,njc->nhj', scale_conditioned_features_sam, scale_conditioned_features_sam) # sampled pixel to sampled pixel similarity, float[sampled scales, sampled pixels, sampled pixels]
 
         diag_mask = torch.eye(corr.shape[1], dtype=bool, device=corr.device)
 
         sum_0 = gt_corrs.sum(dim = 0)
-        consistent_negative = sum_0 == 0
-        consistent_positive = sum_0 == len(gt_corrs)
+        consistent_negative = sum_0 == 0 # two sampled pixels belong to different mask in any sampled scales, bool[sampled pixels, sampled pixels]
+        consistent_positive = sum_0 == len(gt_corrs) # two sampled pixels belong to same mask in any sampled scales, bool[sampled pixels, sampled pixels]
         inconsistent = torch.logical_not(torch.logical_or(consistent_negative, consistent_positive))
         inconsistent_num = inconsistent.count_nonzero()
         sampled_num = inconsistent_num / 2
