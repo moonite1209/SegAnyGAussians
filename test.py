@@ -1,9 +1,11 @@
+import os
+os.environ['HF_ENDPOINT']='https://hf-mirror.com'
 import torch
 from torchvision.utils import save_image
 import numpy as np
-import os
 import shutil
 import torch.nn.functional as F
+from PIL import Image
 
 def sam_masks_rgb():
     spath = 'data/temp/shenyang/sam_masks'
@@ -33,22 +35,35 @@ def pick_image():
         shutil.copy(os.path.join(image_path, image.name), dst_path)
 
 def test_clip():
-    from transformers import CLIPModel, CLIPProcessor
-    from segment_anything import (SamAutomaticMaskGenerator, SamPredictor, sam_model_registry)
     from PIL import Image
     import cv2
     device = 'cuda'
     def get_entity(image):
-        sam = sam_model_registry['vit_h'](checkpoint='./third_party/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth').to(device)
-        mask_generator = SamAutomaticMaskGenerator(
-            model=sam,
-            points_per_side=32,
-            pred_iou_thresh=0.88,
-            box_nms_thresh=0.7,
-            stability_score_thresh=0.95,
-            crop_n_layers=0,
-            crop_n_points_downscale_factor=1,
-            min_mask_region_area=100,
+        # from segment_anything import (SamAutomaticMaskGenerator, SamPredictor, sam_model_registry)
+        # sam = sam_model_registry['vit_h'](checkpoint='./third_party/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth').to(device)
+        # mask_generator = SamAutomaticMaskGenerator(
+        #     model=sam,
+        #     points_per_side=32,
+        #     pred_iou_thresh=0.88,
+        #     box_nms_thresh=0.7,
+        #     stability_score_thresh=0.95,
+        #     crop_n_layers=0,
+        #     crop_n_points_downscale_factor=1,
+        #     min_mask_region_area=100,
+        # )
+        from transformers import SamProcessor, SamModel
+        from transformers import pipeline
+        model = SamModel.from_pretrained("facebook/sam-vit-huge").to(device)
+        processor = SamProcessor.from_pretrained("facebook/sam-vit-huge")
+        generator =  pipeline("mask-generation", model='facebook/sam-vit-huge', device = device, points_per_batch = 2)
+        with torch.no_grad():
+            outputs = generator(image, points_per_batch = 2)
+        inputs = processor(image, return_tensors='pt').to(model.device)
+        with torch.no_grad():
+            outputs = model(**inputs)
+
+        masks = processor.image_processor.post_process_masks(
+            outputs.pred_masks.cpu(), inputs["original_sizes"].cpu(), inputs["reshaped_input_sizes"].cpu()
         )
         records = mask_generator.generate(np.array(image))
         def get_bbox(mask: np.ndarray):
@@ -88,6 +103,7 @@ def test_clip():
         return torch.from_numpy(np.stack(entity)), torch.from_numpy(np.stack(masks))
 
     def get_semantics(entity):
+        from transformers import CLIPModel, CLIPProcessor
         clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch16").to(device)
         clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch16")
         inputs = clip_processor(images=entity, return_tensors='pt')
@@ -135,21 +151,21 @@ def test_clip():
 
 
     image = Image.open('data/temp/nanfeng/images/00000000001-00000001113-A01113.jpg')
-    # entity, masks = get_entity(image)
-    # with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-    #     semantics = get_semantics(entity)
-    # torch.save(entity, 'temp/entity.pth')
-    # torch.save(masks, 'temp/masks.pth')
-    # torch.save(semantics, 'temp/semantics.pth')
+    entity, masks = get_entity(image)
+    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+        semantics = get_semantics(entity)
+    torch.save(entity, 'temp/entity.pth')
+    torch.save(masks, 'temp/masks.pth')
+    torch.save(semantics, 'temp/semantics.pth')
 
     entity = torch.load('temp/entity.pth')
     masks = torch.load('temp/masks.pth')
     semantics = torch.load('temp/semantics.pth')
 
     ptexts = ['house', 'pavilion', 'tree', 'vegetable field', 'car', 'pool']
-    # with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-    #     relevancy_map = get_relevancy_map(entity, masks, semantics, ptexts, ["object", "things", "stuff", "texture"])
-    # torch.save(relevancy_map, 'temp/relevancy_map.pth')
+    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+        relevancy_map = get_relevancy_map(entity, masks, semantics, ptexts, ["object", "things", "stuff", "texture"])
+    torch.save(relevancy_map, 'temp/relevancy_map.pth')
 
     relevancy_map = torch.load('temp/relevancy_map.pth')
     for ptext, map in zip(ptexts, relevancy_map):
@@ -157,12 +173,32 @@ def test_clip():
         img = (img*(map>0.5)).permute(1,2,0)
         Image.fromarray(img.numpy()).save(f'temp/{ptext}.jpg')
 
+def test_dinov2():
+    from transformers import AutoImageProcessor, AutoModel
 
+    image = Image.open('data/temp/nanfeng/images/00000000001-00000001113-A01113.jpg')
+
+    processor = AutoImageProcessor.from_pretrained('facebook/dinov2-base')
+    model = AutoModel.from_pretrained('facebook/dinov2-base')
+
+    inputs = processor(images=image, return_tensors="pt")
+    outputs = model(**inputs)
+    last_hidden_states = outputs[0]
+
+    # We have to force return_dict=False for tracing
+    model.config.return_dict = False
+
+    with torch.no_grad():
+        traced_model = torch.jit.trace(model, [inputs.pixel_values])
+        traced_outputs = traced_model(inputs.pixel_values)
+
+    print((last_hidden_states - traced_outputs[0]).abs().max())
 
 def main():
     # sam_masks_rgb()
     # pick_image()
-    test_clip()
+    # test_clip()
+    test_dinov2()
 
 if __name__ =='__main__':
     main()
