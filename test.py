@@ -174,25 +174,29 @@ def test_clip():
         Image.fromarray(img.numpy()).save(f'temp/{ptext}.jpg')
 
 def test_dinov2():
+    device = 'cuda'
+    # inp = torch.randn(1, 3, 10, 12)
+    # w = torch.randn(2, 3, 4, 5)
+    # inp_unf = torch.nn.functional.unfold(inp, (4, 5))  # shape of inp_unf is (1,3*4*5,7*8)
+
+    # out_unf = inp_unf.transpose(1, 2).matmul(w.view(w.size(0), -1).t()).transpose(1, 2)  # shape of out_unf is (1,2,56)
+    # #  以上代码相当于 inp_unf(1, 60, 56) .t() * w(2 , 3 * 4 * 5).t() → out_unf (1, 56, 2 ) → out_unf (1, 2, 56)
+
+    # out = torch.nn.functional.fold(out_unf, (7, 8), (1, 1))  # out.size() = (1,2,7,8)
+
+    # print((torch.nn.functional.conv2d(inp, w) - out).abs().max())  # tensor(1.9073e-06)
     from transformers import AutoImageProcessor, AutoModel
 
     image = Image.open('data/temp/nanfeng/images/00000000001-00000001113-A01113.jpg')
 
     processor = AutoImageProcessor.from_pretrained('facebook/dinov2-base')
-    model = AutoModel.from_pretrained('facebook/dinov2-base')
+    model = AutoModel.from_pretrained('facebook/dinov2-base').to(device)
 
     inputs = processor(images=image, return_tensors="pt")
-    outputs = model(**inputs)
+    outputs = model(**inputs.to(model.device))
     last_hidden_states = outputs[0]
 
-    # We have to force return_dict=False for tracing
-    model.config.return_dict = False
-
-    with torch.no_grad():
-        traced_model = torch.jit.trace(model, [inputs.pixel_values])
-        traced_outputs = traced_model(inputs.pixel_values)
-
-    print((last_hidden_states - traced_outputs[0]).abs().max())
+    print(outputs['last_hidden_state'].shape)
 
 def main():
     # sam_masks_rgb()
