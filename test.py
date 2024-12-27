@@ -185,6 +185,7 @@ def test_dinov2():
     # out = torch.nn.functional.fold(out_unf, (7, 8), (1, 1))  # out.size() = (1,2,7,8)
 
     # print((torch.nn.functional.conv2d(inp, w) - out).abs().max())  # tensor(1.9073e-06)
+    # F.conv2d()
     from transformers import AutoImageProcessor, AutoModel
 
     image = Image.open('data/temp/nanfeng/images/00000000001-00000001113-A01113.jpg')
