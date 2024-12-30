@@ -113,6 +113,7 @@ def test_clip():
         return semantics
     
     def get_relevancy_map(entity, masks, semantics, ptexts, ntexts):
+        from transformers import CLIPModel, CLIPProcessor
         def get_semantic_map(masks: torch.Tensor, semantics):
             semantic_map = torch.full(masks.shape[1:3], -1, dtype=torch.int64)
             semantics = torch.concat((semantics, torch.zeros((1, semantics.shape[-1]))), dim=0)
@@ -151,18 +152,18 @@ def test_clip():
 
 
     image = Image.open('data/temp/nanfeng/images/00000000001-00000001113-A01113.jpg')
-    entity, masks = get_entity(image)
-    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-        semantics = get_semantics(entity)
-    torch.save(entity, 'temp/entity.pth')
-    torch.save(masks, 'temp/masks.pth')
-    torch.save(semantics, 'temp/semantics.pth')
+    # entity, masks = get_entity(image)
+    # with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+    #     semantics = get_semantics(entity)
+    # torch.save(entity, 'temp/entity.pth')
+    # torch.save(masks, 'temp/masks.pth')
+    # torch.save(semantics, 'temp/semantics.pth')
 
     entity = torch.load('temp/entity.pth')
     masks = torch.load('temp/masks.pth')
     semantics = torch.load('temp/semantics.pth')
 
-    ptexts = ['house', 'pavilion', 'tree', 'vegetable field', 'car', 'pool']
+    ptexts = ['house', 'building', 'pavilion', 'tree', 'vegetable field', 'car', 'pool', 'water', 'grass']
     with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
         relevancy_map = get_relevancy_map(entity, masks, semantics, ptexts, ["object", "things", "stuff", "texture"])
     torch.save(relevancy_map, 'temp/relevancy_map.pth')
@@ -202,8 +203,8 @@ def test_dinov2():
 def main():
     # sam_masks_rgb()
     # pick_image()
-    # test_clip()
-    test_dinov2()
+    test_clip()
+    # test_dinov2()
 
 if __name__ =='__main__':
     main()

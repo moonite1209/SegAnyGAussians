@@ -5,7 +5,6 @@ import os
 from tqdm import tqdm
 from os import makedirs
 from gaussian_renderer import render, render_contrastive_feature
-import torchvision
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
@@ -22,6 +21,9 @@ import dearpygui.dearpygui as dpg
 import math
 from scene.cameras import Camera
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
+from scene.dataset_readers import readColmapCameras, read_extrinsics_binary, read_intrinsics_binary
+from utils.camera_utils import cameraList_from_camInfos
+from utils.visualization_utils import save_image
 
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial import KDTree
@@ -47,6 +49,9 @@ class CONFIG:
 
     debug = False
     dt_gamma = 0.2
+
+    resolution = 1
+    data_device = 'cpu'
 
     # gaussian model
     sh_degree = 0
@@ -205,6 +210,10 @@ class GaussianSplattingGUI:
             'feature': feature_gaussian_model,
             'scale_gate': scale_gate
         }
+        self.cameras = readColmapCameras(read_extrinsics_binary(os.path.join(self.opt.DATA_PATH, 'sparse/0/images.bin')), 
+                                         read_intrinsics_binary(os.path.join(self.opt.DATA_PATH, 'sparse/0/cameras.bin')), 
+                                         os.path.join(self.opt.DATA_PATH, 'images'))
+        self.camera_list = cameraList_from_camInfos(self.cameras, 1, self.opt)
 
         self.cluster_point_colors = None
         self.label_to_color = np.random.rand(1000, 3)
@@ -575,6 +584,8 @@ class GaussianSplattingGUI:
             return torch.tensor(new_label).cuda()
         self.point_labels = filter3d(point_xyz, self.point_labels)
         self.cluster_point_colors = self.label_to_color[self.point_labels.detach().cpu().numpy()]
+        def get_langauge_features(point_labels, ):
+            img = render(self.camera_list[0], self.engine['scene'], self.opt, self.bg_color, filtered_mask=~(self.point_labels==100))['render']
         # self.cluster_point_colors[self.seg_score.max(dim = -1)[0].detach().cpu().numpy() < 0.5] = (0,0,0)
 
 
@@ -770,15 +781,17 @@ class GaussianSplattingGUI:
 if __name__ == "__main__":
     parser = ArgumentParser(description="GUI option")
 
-    parser.add_argument('-m', '--model_path', type=str, default="./output/figurines")
-    parser.add_argument('-f', '--feature_iteration', type=int, default=10000)
-    parser.add_argument('-s', '--scene_iteration', type=int, default=30000)
+    parser.add_argument('-m', '--model_path', type=str, default="./output/temp/nanfeng")
+    parser.add_argument('-s', '--data_path', type=str, default="./data/temp/nanfeng")
+    parser.add_argument('--feature_iteration', type=int, default=10000)
+    parser.add_argument('--scene_iteration', type=int, default=30000)
 
     args = parser.parse_args()
 
     opt = CONFIG()
 
     opt.MODEL_PATH = args.model_path
+    opt.DATA_PATH = args.data_path
     opt.FEATURE_GAUSSIAN_ITERATION = args.feature_iteration
     opt.SCENE_GAUSSIAN_ITERATION = args.scene_iteration
 
