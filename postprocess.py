@@ -42,7 +42,6 @@ lp = ModelParams(parser)
 pp = PipelineParams(parser)
 parser.add_argument("--progress_path", type=str, required=True)
 parser.add_argument("--clean", action='store_true')
-parser.add_argument("--scale", type=float, default=1.0)
 parser.add_argument("--k", type=int, default=256)
 parser.add_argument("--feature_ratio", type=float, default=0.5)
 parser.add_argument("--instance_threshold", type=float, default=0.3)
@@ -63,11 +62,6 @@ gs_model = GaussianModel(args.sh_degree)
 gs_model.load_ply(args.point_cloud_path)
 feat_gs_model = FeatureGaussianModel(args.feature_dim)
 feat_gs_model.load_ply(args.contrastive_feature_point_cloud_path)
-scale_gate = torch.nn.Sequential(
-        torch.nn.Linear(1, args.feature_dim, bias=True),
-        torch.nn.Sigmoid()
-    ).cuda()
-scale_gate.load_state_dict(torch.load(args.scale_gate_path))
 try:
     cameras = readColmapCameras(read_extrinsics_binary(os.path.join(args.sparse_path, 'images.bin')), 
                                 read_intrinsics_binary(os.path.join(args.sparse_path, 'cameras.bin')), 
@@ -84,14 +78,12 @@ point_scales = feat_gs_model.get_scaling.detach().cpu()
 is_big_gaussian = point_scales.max(dim=-1).values>point_scales.max(dim=-1).values.median()*args.scale_threshold
 point_opacities = feat_gs_model.get_opacity.detach().cpu().squeeze()
 is_transparent_gaissian = point_opacities<args.opcity_threshold
-gates = scale_gate(torch.tensor([args.scale]).cuda()).unsqueeze(0).detach().cpu()
 print(f'{point_features.shape=}, {point_xyz.shape=}')
 
 sampled_mask = uniform_sample(point_xyz, args.sample_num)
 # sampled_mask = torch.rand(point_features.shape[0]) > 0.99
 
-scale_conditioned_point_features = F.normalize(point_features, dim = -1, p = 2) * gates
-normed_point_features = F.normalize(scale_conditioned_point_features, dim = -1, p = 2)
+normed_point_features = F.normalize(point_features, dim = -1, p = 2)
 sampled_normed_point_features = normed_point_features[sampled_mask]
 
 min_val = torch.min(point_xyz, dim=0).values
