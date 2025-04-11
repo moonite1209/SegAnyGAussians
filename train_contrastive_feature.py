@@ -185,13 +185,14 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         mask_features = torch.zeros((sam_masks.shape[0], rendered_features.shape[-1])).to(rendered_features)
         for i in range(len(mask_features)):
             mask_features[i,...] = F.normalize(rendered_features[sam_masks[i]].mean(dim=0), dim=-1)
+        backgroud_feature = F.normalize(rendered_features[background_mask].mean(dim=0), dim=-1)
         mask_features = F.normalize(mask_features, dim=-1)
         intra_loss = []
         for sam_mask, mask_feature in zip(sam_masks, mask_features, strict=True):
             intra_loss.append(((rendered_features[sam_mask]@mask_feature)/2+0.5).mean())
         intra_loss = -torch.log(torch.stack(intra_loss).mean())
 
-        inter_mask_sim = torch.einsum('ac, bc -> ab', mask_features, mask_features)
+        inter_mask_sim = torch.einsum('ac, bc -> ab', torch.cat((mask_features, backgroud_feature[None])), torch.cat((mask_features, backgroud_feature[None])))
         inter_loss = torch.triu(inter_mask_sim/2+0.5, diagonal=1).mean()
         min_val = torch.min(feature_gaussians.get_xyz, dim=0).values
         max_val = torch.max(feature_gaussians.get_xyz, dim=0).values
@@ -208,7 +209,8 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
 
         loss = intra_loss \
                 + inter_loss \
-                + opt.rfn * rendered_feature_norm_reg + opt.distance_weight * distance_loss
+                + opt.rfn * rendered_feature_norm_reg \
+                + opt.distance_weight * distance_loss
 
         loss.backward()
 
