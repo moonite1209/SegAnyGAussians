@@ -180,16 +180,15 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
 
         rendered_feature_norm = rendered_features.norm(dim = 0, p=2).mean()
         rendered_feature_norm_reg = (1-rendered_feature_norm)**2 # regularization term, keep aligned on a ray
-
         rendered_features = F.normalize(F.interpolate(rendered_features.unsqueeze(0), viewpoint_cam.original_masks.shape[-2:], mode='bilinear').squeeze(0), dim=0).permute(1,2,0)
+
         mask_features = torch.zeros((sam_masks.shape[0], rendered_features.shape[-1])).to(rendered_features)
         for i in range(len(mask_features)):
             mask_features[i,...] = F.normalize(rendered_features[sam_masks[i]].mean(dim=0), dim=-1)
         backgroud_feature = F.normalize(rendered_features[background_mask].mean(dim=0), dim=-1)
-        mask_features = F.normalize(mask_features, dim=-1)
         intra_loss = []
         for sam_mask, mask_feature in zip(sam_masks, mask_features, strict=True):
-            intra_loss.append(((rendered_features[sam_mask]@mask_feature)/2+0.5).mean())
+            intra_loss.append(((rendered_features[sam_mask]@mask_feature.detach())/2+0.5).mean())
         intra_loss = -torch.log(torch.stack(intra_loss).mean())
 
         inter_mask_sim = torch.einsum('ac, bc -> ab', torch.cat((mask_features, backgroud_feature[None])), torch.cat((mask_features, backgroud_feature[None])))

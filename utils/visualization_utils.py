@@ -1,5 +1,6 @@
 import sklearn.preprocessing
 from sklearn.decomposition import PCA
+from umap import UMAP
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -26,7 +27,7 @@ def to_image_array(array, dataformat='HWC', use_pca=False) -> np.ndarray:
         pass
 
     h,w,c = array.shape
-    array = (array*255).astype(np.uint8)
+    array = cv2.normalize(array, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX).astype(np.uint8)
 
     if dataformat=='CHW':
         return array.transpose(2,0,1)
@@ -60,8 +61,8 @@ def feature_map_to_image(feature_map: np.ndarray, dataformat='HWC')->np.ndarray:
         if c==2:
             feature_map = np.concat((feature_map, np.zeros((h,w,1))), axis=-1)
         feature_map_flat = feature_map.reshape(-1,c)
-        pca = PCA(n_components=3)
-        feature_map_pca = pca.fit_transform(feature_map_flat).reshape(h, w, -1)
+        umap = UMAP(n_components=3)
+        feature_map_pca = umap.fit_transform(feature_map_flat).reshape(h, w, -1)
         feature_map_rgb = cv2.normalize(feature_map_pca, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX).astype(np.uint8)
 
     if dataformat=='CHW':
