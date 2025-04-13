@@ -175,15 +175,11 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             sam_masks = viewpoint_cam.original_masks.cuda().float() # float[masks, h, w]
             viewpoint_cam.feature_height, viewpoint_cam.feature_width = viewpoint_cam.image_height, viewpoint_cam.image_width
 
-            non_mask_region = sam_masks.sum(dim = 0) == 0
-            ray_sample_rate = opt.ray_sample_rate if opt.ray_sample_rate > 0 else torch.clamp(opt.num_sampled_rays / (~non_mask_region).sum(), 0, 1)
+            background_mask = (sam_masks.sum(dim = 0) == 0).float()
+            ray_sample_rate = opt.ray_sample_rate if opt.ray_sample_rate > 0 else torch.clamp(torch.tensor(opt.num_sampled_rays / (sam_masks.shape[-2]*sam_masks.shape[-1])), 0, 1)
 
             sampled_ray = torch.rand(sam_masks.shape[-2], sam_masks.shape[-1]).cuda()
-            sampled_ray[non_mask_region] = 1e9
             sampled_ray = sampled_ray < ray_sample_rate
-
-            sampled_ray = torch.logical_and(sampled_ray, ~non_mask_region) # sampled pixel mask
-
             # H W
             per_pixel_mask_size = sam_masks * sam_masks.sum(-1).sum(-1)[:,None,None] # mask fill with size, [masks, h, w]
 
@@ -199,6 +195,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             per_pixel_weight = (per_pixel_weight - per_pixel_weight.min()) / (per_pixel_weight.max() - per_pixel_weight.min() + 1e-9) * 9. + 1. # pixel的平均mask size越大其权重越小, float[sampled pixels, sampled pixels]
             
             sam_masks_sampled_ray = sam_masks[:, sampled_ray] # bool[masks, sampled pixels]
+            background_sample_mask = background_mask[sampled_ray]
 
             gt_vec = sam_masks_sampled_ray # float[masks, sampled pixels], a pixel belong to a mask
             gt_corrs = torch.einsum('nh,nj->hj', gt_vec, gt_vec)
@@ -219,12 +216,16 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         scale_conditioned_features_sam = torch.nn.functional.normalize(scale_conditioned_features_sam, dim=-1, p=2)
         corr = torch.einsum('ac,bc->ab', scale_conditioned_features_sam, scale_conditioned_features_sam) # sampled pixel to sampled pixel similarity, float[sampled pixels, sampled pixels]
 
-        diag_mask = torch.eye(corr.shape[0], dtype=bool, device=corr.device)
-        consistent_negative = gt_corrs == 0 # two sampled pixels belong to different mask in any sampled scales, bool[sampled pixels, sampled pixels]
-        consistent_positive = gt_corrs == 1 # two sampled pixels belong to same mask in any sampled scales, bool[sampled pixels, sampled pixels]
-        sampled_mask_positive = consistent_positive
-        sampled_mask_negative = consistent_negative
+        sampled_mask_positive = gt_corrs == 1 # two sampled pixels belong to different mask in any sampled scales, bool[sampled pixels, sampled pixels]
+        sampled_mask_positive &= ~(background_sample_mask[:,None]@background_sample_mask[None,:]).bool()
+        sampled_mask_positive = torch.triu(sampled_mask_positive, diagonal=1)
 
+        sampled_mask_negative = gt_corrs == 0 # two sampled pixels belong to same mask in any sampled scales, bool[sampled pixels, sampled pixels]
+        sampled_mask_negative = torch.triu(sampled_mask_negative, diagonal=1)
+        
+        example_num = sampled_mask_positive.sum()+sampled_mask_negative.sum()
+        positive_loss = (- per_pixel_weight[sampled_mask_positive] * gt_corrs[sampled_mask_positive] * corr[sampled_mask_positive]).mean()
+        negative_loss = (per_pixel_weight[sampled_mask_negative] * (1 - gt_corrs[sampled_mask_negative]) * torch.relu(corr[sampled_mask_negative])).mean()
         # inconsistent = torch.logical_not(torch.logical_or(consistent_negative, consistent_positive))
         # inconsistent_num = inconsistent.count_nonzero()
         # sampled_num = inconsistent_num / 2
@@ -270,9 +271,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         ptp_feature_sim = torch.einsum('ac, bc -> ab', sample_scaled_features, sample_scaled_features) # float[fps,fps]
         distance_loss = (ptp_xyz_distance*torch.clamp(ptp_feature_sim,0)).mean()
 
-        loss = (- per_pixel_weight[sampled_mask_positive] * gt_corrs[sampled_mask_positive] * corr[sampled_mask_positive]).mean().nan_to_num() \
-                + (per_pixel_weight[sampled_mask_negative] * (1 - gt_corrs[sampled_mask_negative]) * torch.relu(corr[sampled_mask_negative])).mean().nan_to_num() \
-                + opt.rfn * rendered_feature_norm_reg + opt.distance_weight * distance_loss
+        loss = 2*(sampled_mask_negative.sum()/example_num)*positive_loss + 2*(sampled_mask_positive.sum()/example_num)*negative_loss + opt.rfn * rendered_feature_norm_reg + opt.distance_weight * distance_loss
 
         with torch.no_grad():
             cosine_pos = corr[gt_corrs == 1].mean().nan_to_num()
@@ -287,10 +286,17 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
 
         if iteration % 10 == 0:
             progress_bar.set_postfix({
-                "RFN": f"{rendered_feature_norm.item():.{3}f}",
+                "pos loss": f"{positive_loss.item():.{3}f}",
+                "neg loss": f"{negative_loss.item():.{3}f}",
+                "rfn loss": f"{rendered_feature_norm_reg.item():.{3}f}",
+                "dis loss": f"{distance_loss.item():.{3}f}",
+                "Loss": f"{loss.item():.{3}f}",
                 "Pos cos": f"{cosine_pos.item():.{3}f}",
                 "Neg cos": f"{cosine_neg.item():.{3}f}",
-                "Loss": f"{loss.item():.{3}f}",
+                "pos weight": f"{2*(sampled_mask_negative.sum()/example_num).item():.{3}f}",
+                "neg weight": f"{2*(sampled_mask_positive.sum()/example_num).item():.{3}f}",
+                "rfn weight": f"{opt.rfn:.{3}f}",
+                "dis weight": f"{opt.distance_weight:.{3}f}",
             })
             progress_bar.update(10)
 
