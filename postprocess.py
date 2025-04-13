@@ -42,7 +42,6 @@ lp = ModelParams(parser)
 pp = PipelineParams(parser)
 parser.add_argument("--progress_path", type=str, required=True)
 parser.add_argument("--clean", action='store_true')
-parser.add_argument("--scale", type=float, default=1.0)
 parser.add_argument("--k", type=int, default=256)
 parser.add_argument("--feature_ratio", type=float, default=0.5)
 parser.add_argument("--instance_threshold", type=float, default=0.3)
@@ -54,20 +53,11 @@ parser.add_argument("--classes", nargs="+", type=str, default=['chair', 'table',
 args = parser.parse_args(sys.argv[1:])
 bg_color = torch.tensor([1,1,1] if args.white_background else [0, 0, 0], dtype=torch.float32, device="cuda")
 torch.manual_seed(42)
-# sam = sam_model_registry['vit_h']('./third_party/segment-anything/weights/sam_vit_h_4b8939.pth').to('cuda')
-# mask_predictor = SamPredictor(sam)
-# clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch16").to('cuda')
-# clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch16")
 
 gs_model = GaussianModel(args.sh_degree)
 gs_model.load_ply(args.point_cloud_path)
 feat_gs_model = FeatureGaussianModel(args.feature_dim)
 feat_gs_model.load_ply(args.contrastive_feature_point_cloud_path)
-scale_gate = torch.nn.Sequential(
-        torch.nn.Linear(1, args.feature_dim, bias=True),
-        torch.nn.Sigmoid()
-    ).cuda()
-scale_gate.load_state_dict(torch.load(args.scale_gate_path))
 try:
     cameras = readColmapCameras(read_extrinsics_binary(os.path.join(args.sparse_path, 'images.bin')), 
                                 read_intrinsics_binary(os.path.join(args.sparse_path, 'cameras.bin')), 
@@ -84,14 +74,12 @@ point_scales = feat_gs_model.get_scaling.detach().cpu()
 is_big_gaussian = point_scales.max(dim=-1).values>point_scales.max(dim=-1).values.median()*args.scale_threshold
 point_opacities = feat_gs_model.get_opacity.detach().cpu().squeeze()
 is_transparent_gaissian = point_opacities<args.opcity_threshold
-gates = scale_gate(torch.tensor([args.scale]).cuda()).unsqueeze(0).detach().cpu()
 print(f'{point_features.shape=}, {point_xyz.shape=}')
 
 sampled_mask = uniform_sample(point_xyz, args.sample_num)
 # sampled_mask = torch.rand(point_features.shape[0]) > 0.99
 
-scale_conditioned_point_features = F.normalize(point_features, dim = -1, p = 2) * gates
-normed_point_features = F.normalize(scale_conditioned_point_features, dim = -1, p = 2)
+normed_point_features = F.normalize(point_features, dim = -1, p = 2)
 sampled_normed_point_features = normed_point_features[sampled_mask]
 
 min_val = torch.min(point_xyz, dim=0).values
@@ -107,15 +95,6 @@ sampled_hybird_point_features = torch.cat((sampled_normed_point_features, sample
 sampled_normed_point_features_distance = torch.clamp(1-torch.einsum('ac,bc -> ab', sampled_normed_point_features, sampled_normed_point_features), 0)
 sampled_std_point_xyz_distance = torch.clamp(torch.norm(sampled_std_point_xyz[:,None,:] - sampled_std_point_xyz[None,:,:], dim=-1), 0)
 hybird_distance = args.feature_ratio*sampled_normed_point_features_distance + (1-args.feature_ratio)*sampled_std_point_xyz_distance
-
-# def hybird_distance(u, v):
-#     u_feature, u_xyz = u[:args.feature_dim], u[args.feature_dim:]
-#     v_feature, v_xyz = v[:args.feature_dim], v[args.feature_dim:]
-
-#     feature_distance = 1-np.dot(u_feature, v_feature)
-#     xyz_distance = np.linalg.norm(u_xyz-v_xyz)
-
-#     return 0.2*feature_distance+0.8*xyz_distance
 
 clusterer = HDBSCAN(min_cluster_size=10, cluster_selection_epsilon=0.01, allow_single_cluster = False, metric='precomputed') # HDBSCAN
 

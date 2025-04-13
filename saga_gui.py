@@ -67,7 +67,6 @@ class CONFIG:
     white_background = False
 
     feature_dim = 32
-    scale_gate_path = ''
     feature_pcd_path = ''
     scene_pcd_path = ''
     json_path = ''
@@ -186,7 +185,7 @@ class OrbitCamera:
 
 
 class GaussianSplattingGUI:
-    def __init__(self, opt, gaussian_model:GaussianModel, feature_gaussian_model:FeatureGaussianModel, scale_gate: torch.nn.modules.container.Sequential) -> None:
+    def __init__(self, opt, gaussian_model:GaussianModel, feature_gaussian_model:FeatureGaussianModel) -> None:
         self.opt = opt
 
         self.width = opt.width
@@ -210,7 +209,6 @@ class GaussianSplattingGUI:
         self.engine = {
             'scene': gaussian_model,
             'feature': feature_gaussian_model,
-            'scale_gate': scale_gate
         }
 
         self.cluster_point_colors = None
@@ -223,7 +221,6 @@ class GaussianSplattingGUI:
         print("loading model file...")
         self.engine['scene'].load_ply(self.opt.scene_pcd_path)
         self.engine['feature'].load_ply(self.opt.feature_pcd_path)
-        self.engine['scale_gate'].load_state_dict(torch.load(self.opt.scale_gate_path))
         self.do_pca()   # calculate self.proj_mat
         self.load_model = True
 
@@ -369,8 +366,6 @@ class GaussianSplattingGUI:
         with dpg.window(label="Control", tag="_control_window", width=300, height=550, pos=[self.window_width+10, 0]):
 
             dpg.add_text("Mouse position: click anywhere to start. ", tag="pos_item")
-            dpg.add_slider_float(label="Scale", default_value=0.5,
-                                 min_value=0.0, max_value=1.0, tag="_Scale")
             dpg.add_slider_float(label="ScoreThres", default_value=0.0,
                                  min_value=0.0, max_value=1.0, tag="_ScoreThres")
             # dpg.add_button(label="render_option", tag="_button_depth",
@@ -644,11 +639,6 @@ class GaussianSplattingGUI:
         sems /= (torch.norm(sems, dim=-1, keepdim=True) + 1e-6)
         sem_transed = torch.from_numpy(self.proj_mat.transform(sems.flatten(0,1).detach().cpu())).cuda().reshape(H,W,-1)
         sem_transed_rgb = torch.clip(sem_transed*0.5+0.5, 0, 1).float()
-
-        scale = dpg.get_value('_Scale')
-        self.gates = self.engine['scale_gate'](torch.tensor([scale]).cuda())
-        scale_gated_feat = sems * self.gates.unsqueeze(0).unsqueeze(0)
-        scale_gated_feat = torch.nn.functional.normalize(scale_gated_feat, dim = -1, p = 2)
         
         if self.clear_edit:
             self.new_click_xy = []
@@ -682,7 +672,7 @@ class GaussianSplattingGUI:
         score_map = None
         if len(self.new_click_xy) > 0:
 
-            featmap = scale_gated_feat.reshape(H, W, -1)
+            featmap = sems.reshape(H, W, -1)
             
             if self.new_click:
                 xy = self.new_click_xy
@@ -723,10 +713,7 @@ class GaussianSplattingGUI:
                 """
                 self.segment3d_flag = False
                 feat_pts = self.engine['feature'].get_point_features.squeeze()
-                scale_gated_feat_pts = feat_pts * self.gates.unsqueeze(0)
-                scale_gated_feat_pts = torch.nn.functional.normalize(scale_gated_feat_pts, dim = -1, p = 2)
-
-                score_pts = scale_gated_feat_pts @ self.chosen_feature
+                score_pts = feat_pts @ self.chosen_feature
                 score_pts = (score_pts + 1.0) / 2
                 self.score_pts_binary = (score_pts > dpg.get_value('_ScoreThres')).sum(1) > 0
 
@@ -789,7 +776,6 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="GUI option")
 
     parser.add_argument('--sh_degree', type=int, default=3)
-    parser.add_argument('--scale_gate_path', type=str, required=True)
     parser.add_argument('--feature_pcd_path', type=str, required=True)
     parser.add_argument('--scene_pcd_path', type=str, required=True)
     parser.add_argument('--json_path', type=str, required=True)
@@ -799,17 +785,12 @@ if __name__ == "__main__":
     opt = CONFIG()
 
     opt.sh_degree = args.sh_degree
-    opt.scale_gate_path = args.scale_gate_path
     opt.feature_pcd_path = args.feature_pcd_path
     opt.scene_pcd_path = args.scene_pcd_path
     opt.json_path = args.json_path
 
     gs_model = GaussianModel(opt.sh_degree)
     feat_gs_model = FeatureGaussianModel(opt.feature_dim)
-    scale_gate = torch.nn.Sequential(
-        torch.nn.Linear(1, opt.feature_dim, bias=True),
-        torch.nn.Sigmoid()
-    ).cuda()
-    gui = GaussianSplattingGUI(opt, gs_model, feat_gs_model, scale_gate)
+    gui = GaussianSplattingGUI(opt, gs_model, feat_gs_model)
 
     gui.render()
