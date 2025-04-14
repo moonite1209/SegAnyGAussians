@@ -271,11 +271,13 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         ptp_feature_sim = torch.einsum('ac, bc -> ab', sample_scaled_features, sample_scaled_features) # float[fps,fps]
         distance_loss = (ptp_xyz_distance*torch.clamp(ptp_feature_sim,0)).mean()
 
-        loss = 2*(sampled_mask_negative.sum()/example_num)*positive_loss + 2*(sampled_mask_positive.sum()/example_num)*negative_loss + opt.rfn * rendered_feature_norm_reg + opt.distance_weight * distance_loss
+        positive_weight = 2*(sampled_mask_negative.sum()/example_num)
+        negative_weight = 2*(sampled_mask_positive.sum()/example_num)
+        loss = positive_weight*positive_loss + negative_weight*negative_loss + opt.rfn * rendered_feature_norm_reg + opt.distance_weight * distance_loss
 
         with torch.no_grad():
-            cosine_pos = corr[gt_corrs == 1].mean().nan_to_num()
-            cosine_neg = corr[gt_corrs == 0].mean().nan_to_num()
+            pos_sim = corr[gt_corrs == 1].mean()
+            neg_sim = corr[gt_corrs == 0].mean()
 
         loss.backward()
 
@@ -290,9 +292,9 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
                 "neg loss": f"{negative_loss.item():.{3}f}",
                 "rfn loss": f"{rendered_feature_norm_reg.item():.{3}f}",
                 "dis loss": f"{distance_loss.item():.{3}f}",
-                "Loss": f"{loss.item():.{3}f}",
-                "Pos cos": f"{cosine_pos.item():.{3}f}",
-                "Neg cos": f"{cosine_neg.item():.{3}f}",
+                "loss": f"{loss.item():.{3}f}",
+                "pos sim": f"{pos_sim.item():.{3}f}",
+                "neg sim": f"{neg_sim.item():.{3}f}",
                 "pos weight": f"{2*(sampled_mask_negative.sum()/example_num).item():.{3}f}",
                 "neg weight": f"{2*(sampled_mask_positive.sum()/example_num).item():.{3}f}",
                 "rfn weight": f"{opt.rfn:.{3}f}",
