@@ -73,7 +73,7 @@ point_xyz = feat_gs_model.get_xyz.detach().cpu()
 point_scales = feat_gs_model.get_scaling.detach().cpu()
 is_big_gaussian = point_scales.max(dim=-1).values>point_scales.max(dim=-1).values.median()*args.scale_threshold
 point_opacities = feat_gs_model.get_opacity.detach().cpu().squeeze()
-is_transparent_gaissian = point_opacities<args.opcity_threshold
+is_transparent_gaussian = point_opacities<args.opcity_threshold
 print(f'{point_features.shape=}, {point_xyz.shape=}')
 
 sampled_mask = uniform_sample(point_xyz, args.sample_num)
@@ -197,7 +197,7 @@ def get_class(classes, ratio:np.ndarray):
 output = dict()
 output['point_labels'] = point_labels.tolist()
 output['is_big_gaussian'] = is_big_gaussian.tolist()
-output['is_transparent_gaissian'] = is_transparent_gaissian.tolist()
+output['is_transparent_gaussian'] = is_transparent_gaussian.tolist()
 output['instances'] = {instance: {'class': get_class(args.classes, ratio)} for instance, ratio in instance_ratio.items()}
 output['instances'] = {k: v for k, v in output['instances'].items() if v.get('class') in ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed']}
 with open(args.json_path,'w') as f:
