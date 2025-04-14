@@ -223,8 +223,18 @@ class GaussianSplattingGUI:
         self.engine['feature'].load_ply(self.opt.feature_pcd_path)
         self.do_pca()   # calculate self.proj_mat
         self.load_model = True
-
         print("loading model file done.")
+
+        print("loading json file...")
+        import json
+        with open(self.opt.json_path, 'r') as f:
+            self.json = json.load(f)
+        self.cluster_point_colors = self.label_to_color[np.array(self.json['point_labels'])]
+        self.point_labels = torch.tensor(self.json['point_labels'])
+        self.is_big_gaussian = torch.tensor(self.json['is_big_gaussian'])
+        self.is_transparent_gaussian = torch.tensor(self.json['is_transparent_gaussian'])
+        self.label = int(list(self.json['instances'].keys())[0])
+        print("loading json file done.")
 
         # if opt.point_labels_path:
         #     self.point_labels = torch.load(opt.point_labels_path)
@@ -521,72 +531,7 @@ class GaussianSplattingGUI:
         return cam
     
     def cluster_in_3D(self):
-        import json
-        with open(self.opt.json_path, 'r') as f:
-            self.json = json.load(f)
-        self.cluster_point_colors = self.label_to_color[np.array(self.json['point_labels'])]
-        self.point_labels = torch.tensor(self.json['point_labels'])
-        self.label = int(list(self.json['instances'].keys())[0])
-        # self.cluster_point_colors[self.seg_score.max(dim = -1)[0].detach().cpu().numpy() < 0.5] = (0,0,0)
-
-        # extract langauge features
-        def mask_to_bbox(mask: torch.Tensor) -> torch.Tensor:
-            """
-            根据二值掩码生成边界框 (XYXY格式)。
-            
-            :param mask: 输入二值掩码 (torch.Tensor)，形状为 (H, W)，值为0或1。
-            :return: 边界框 (torch.Tensor)，格式为 [x_min, y_min, x_max, y_max]。
-            """
-            if mask.dim() != 2:
-                raise ValueError("输入掩码必须是二维的 (H, W)")
-
-            # 找到掩码中值为1的位置
-            y_indices, x_indices = torch.where(mask > 0)
-
-            if len(y_indices) == 0 or len(x_indices) == 0:
-                # 如果没有前景像素，返回一个空的bbox
-                return torch.tensor([0, 0, 0, 0], dtype=torch.float32)
-
-            # 计算边界框
-            x_min = x_indices.min().item()
-            x_max = x_indices.max().item()
-            y_min = y_indices.min().item()
-            y_max = y_indices.max().item()
-
-            return torch.tensor([x_min, y_min, x_max, y_max], dtype=torch.float32)
-        
-        def get_entity_image(image: np.ndarray, mask: np.ndarray)->np.ndarray:
-            def get_bbox(mask: np.ndarray):
-                # 查找掩码中的 True 元素的索引
-                rows = np.any(mask, axis=1)
-                cols = np.any(mask, axis=0)
-                
-                # 如果没有 True 元素，则返回全零的边界框
-                if not np.any(rows) or not np.any(cols):
-                    return (0, 0, 0, 0)
-                
-                # 获取边界框的上下左右边界
-                x_min, x_max = np.where(rows)[0][[0, -1]] # h
-                y_min, y_max = np.where(cols)[0][[0, -1]] # w
-                
-                # 返回边界框
-                return (x_min, y_min, x_max + 1 - x_min, y_max + 1 - y_min) # x, y, h, w
-            if mask.sum()==0:
-                return np.zeros((224,224,3), dtype=np.uint8)
-            image = image.copy()
-            # crop by bbox
-            x,y,h,w = get_bbox(mask)
-            image[~mask] = np.zeros(3, dtype=np.uint8) #分割区域外为白色
-            image = image[x:x+h, y:y+w, ...] #将img按分割区域bbox裁剪
-            # pad to square
-            l = max(h,w)
-            paded_img = np.zeros((l, l, 3), dtype=np.uint8)
-            if h > w:
-                paded_img[:,(h-w)//2:(h-w)//2 + w, :] = image
-            else:
-                paded_img[(w-h)//2:(w-h)//2 + h, :, :] = image
-            paded_img = cv2.resize(paded_img, (224,224))
-            return paded_img
+        ...
 
 
     def pca(self, X, n_components=3):
@@ -758,7 +703,7 @@ class GaussianSplattingGUI:
                 self.render_buffer = self.rendered_cluster.cpu().numpy().reshape(-1) if self.render_buffer is None else self.render_buffer + self.rendered_cluster.cpu().numpy().reshape(-1)
             render_num += 1
         if self.render_mode_label:
-            self.render_buffer = render(view_camera, self.engine['scene'], self.opt, self.bg_color, filtered_mask=~((self.point_labels==self.label)))['render'].permute(1,2,0).cpu().numpy().reshape(-1)
+            self.render_buffer = render(view_camera, self.engine['scene'], self.opt, self.bg_color, filtered_mask=(~(self.point_labels==self.label)))['render'].permute(1,2,0).cpu().numpy().reshape(-1)
             render_num += 1
         if self.render_mode_similarity:
             if score_map is not None:
