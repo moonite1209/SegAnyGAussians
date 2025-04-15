@@ -610,7 +610,6 @@ class GaussianSplattingGUI:
             print("loading model file...")
             self.engine['scene'].load_ply(self.opt.scene_pcd_path)
             self.engine['feature'].load_ply(self.opt.feature_pcd_path)
-            self.engine['scale_gate'].load_state_dict(torch.load(self.opt.scale_gate_path))
             self.do_pca()   # calculate self.proj_mat
             self.load_model = True
 
