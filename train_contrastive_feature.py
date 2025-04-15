@@ -226,37 +226,6 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         example_num = sampled_mask_positive.sum()+sampled_mask_negative.sum()
         positive_loss = (- per_pixel_weight[sampled_mask_positive] * gt_corrs[sampled_mask_positive] * corr[sampled_mask_positive]).mean()
         negative_loss = (per_pixel_weight[sampled_mask_negative] * (1 - gt_corrs[sampled_mask_negative]) * torch.relu(corr[sampled_mask_negative])).mean()
-        # inconsistent = torch.logical_not(torch.logical_or(consistent_negative, consistent_positive))
-        # inconsistent_num = inconsistent.count_nonzero()
-        # sampled_num = inconsistent_num / 2
-
-        # rand_num = torch.rand_like(gt_corrs)
-
-        # sampled_positive = torch.logical_and(consistent_positive, rand_num < sampled_num / consistent_positive.count_nonzero())
-
-        # sampled_negative = torch.logical_and(consistent_negative, rand_num < sampled_num / consistent_negative.count_nonzero())
-
-        # sampled_mask_positive = torch.logical_or(
-        #     torch.logical_or(
-        #         sampled_positive, torch.any(torch.logical_and(corr < 0.75, gt_corrs == 1), dim = 0)
-        #     ), 
-        #     inconsistent
-        # )
-        # sampled_mask_positive = torch.logical_and(sampled_mask_positive, ~diag_mask)
-        # sampled_mask_positive = torch.triu(sampled_mask_positive, diagonal=0)
-        # sampled_mask_positive = sampled_mask_positive.bool()
-
-        # sampled_mask_negative = torch.logical_or(
-        #     torch.logical_or(
-        #         sampled_negative, torch.any(torch.logical_and(corr > 0.5, gt_corrs == 0), dim = 0)
-        #     ), 
-        #     inconsistent
-        # )
-        # sampled_mask_negative = torch.logical_and(sampled_mask_negative, ~diag_mask)
-        # sampled_mask_negative = torch.triu(sampled_mask_negative, diagonal=0)
-        # sampled_mask_negative = sampled_mask_negative.bool()
-
-        # per_pixel_weight = per_pixel_weight.unsqueeze(0)
 
         min_val = torch.min(feature_gaussians.get_xyz, dim=0).values
         max_val = torch.max(feature_gaussians.get_xyz, dim=0).values

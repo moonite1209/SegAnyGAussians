@@ -45,11 +45,11 @@ parser.add_argument("--clean", action='store_true')
 parser.add_argument("--k", type=int, default=256)
 parser.add_argument("--feature_ratio", type=float, default=0.5)
 parser.add_argument("--instance_threshold", type=float, default=0.3)
-parser.add_argument("--label_threshold", type=float, default=0.3)
+parser.add_argument("--label_threshold", type=float, default=0.5)
 parser.add_argument("--scale_threshold", type=float, default=0.8)
-parser.add_argument("--opcity_threshold", type=float, default=0.005)
+parser.add_argument("--opcity_threshold", type=float, default=0.01)
 parser.add_argument("--sample_num", type=int, default=10000)
-parser.add_argument("--classes", nargs="+", type=str, default=['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person'])
+parser.add_argument("--classes", nargs="+", type=str, default=['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed'])
 args = parser.parse_args(sys.argv[1:])
 bg_color = torch.tensor([1,1,1] if args.white_background else [0, 0, 0], dtype=torch.float32, device="cuda")
 torch.manual_seed(42)
@@ -186,7 +186,7 @@ for i, camera in tqdm(list(enumerate(camera_list))):
 instance_ratio = {}
 for instance, votes in vote.items():
     votes = np.array(votes)
-    votes = votes[:-1]/votes.sum()
+    votes = votes[:-1].sum()/votes.sum()
     instance_ratio[instance] = votes
 
 def get_class(classes, ratio:np.ndarray):
@@ -199,7 +199,7 @@ output['point_labels'] = point_labels.tolist()
 output['is_big_gaussian'] = is_big_gaussian.tolist()
 output['is_transparent_gaussian'] = is_transparent_gaussian.tolist()
 output['instances'] = {instance: {'class': get_class(args.classes, ratio)} for instance, ratio in instance_ratio.items()}
-output['instances'] = {k: v for k, v in output['instances'].items() if v.get('class') in ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed']}
+output['instances'] = {k: v for k, v in output['instances'].items() if v.get('class') in args.classes}
 with open(args.json_path,'w') as f:
     json.dump(output,f)
 if(args.clean):
@@ -207,8 +207,6 @@ if(args.clean):
         shutil.rmtree(args.masks_path)
     if os.path.isdir(args.labels_path):
         shutil.rmtree(args.labels_path)
-    if os.path.isdir(args.mask_scales_path):
-        shutil.rmtree(args.mask_scales_path)
     if os.path.isfile(args.contrastive_feature_point_cloud_path):
         os.remove(args.contrastive_feature_point_cloud_path)
     if os.path.isfile(args.scale_gate_path):

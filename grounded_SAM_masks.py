@@ -28,7 +28,7 @@ if __name__ == '__main__':
     parser.add_argument("--groundingdino_config_path", default='weights/GroundingDINO_SwinT_OGC.py', type=str)
     parser.add_argument("--downsample", default=1, type=int)
     parser.add_argument("--downsample_type", default='image', type=str, choices=['image', 'mask'], help="Downsample then segment, or segment then downsample.")
-    parser.add_argument('--classes', nargs='+', type=str, default=['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person'])
+    parser.add_argument('--classes', nargs='+', type=str, default=['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed'])
     parser.add_argument('--box_threshold', type=float, default=0.35)
     parser.add_argument('--text_threshold', type=float, default=0.35)
     parser.add_argument('--nms_threshold', type=float, default=0.8)
@@ -54,12 +54,10 @@ if __name__ == '__main__':
     os.makedirs(masks_path, exist_ok=True)
     labels_path = args.labels_path
     os.makedirs(labels_path, exist_ok=True)
+    progress_path = args.progress_path
+    os.makedirs(os.path.dirname(progress_path), exist_ok=True)
     if args.annotated_images_path:
         os.makedirs(args.annotated_images_path, exist_ok=True)
-    # detections_path = os.path.join(args.output_path, 'detections')
-    # os.makedirs(detections_path, exist_ok=True)
-    # rgb_masks_path = os.path.join(args.output_path, 'rgb_masks')
-    # os.makedirs(rgb_masks_path, exist_ok=True)
     
     print("Extracting Grounded SAM masks...")
     # Prompting SAM with detected boxes
@@ -91,7 +89,7 @@ if __name__ == '__main__':
         return detections
     length = len(sorted([e for e in os.listdir(images_path) if e.endswith('.jpg')]))
     for i, image_name in tqdm(list(enumerate(sorted([e for e in os.listdir(images_path) if e.endswith('.jpg')])))):
-        with open(args.progress_path, 'w') as f:
+        with open(progress_path, 'w') as f:
             f.write(str((i+1)*25//length))
         image = cv2.imread(os.path.join(images_path, image_name))
         rotated_image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
@@ -103,12 +101,6 @@ if __name__ == '__main__':
             box_threshold=args.box_threshold,
             text_threshold=args.text_threshold
         )
-        # detections.metadata.update({
-        #     'label_to_class': dict(enumerate(args.classes)),
-        #     'downsample': args.downsample,
-        #     'image_height': image.shape[0],
-        #     'image_width': image.shape[1]})
-        # NMS post process
         nms_idx = torchvision.ops.nms(
             torch.from_numpy(detections.xyxy), 
             torch.from_numpy(detections.confidence), 
@@ -124,13 +116,8 @@ if __name__ == '__main__':
             image=cv2.cvtColor(rotated_image, cv2.COLOR_BGR2RGB),
             xyxy=detections.xyxy
         )
-        # with open(os.path.join(detections_path, f'{os.path.splitext(os.path.basename(image_name))[0]}.pkl'), "wb") as file:
-        #     pickle.dump(detections, file)
 
         mask_list=[]
-        # background = torch.ones(image.shape[:2], dtype=torch.bool)
-        # if args.downsample_type == 'mask':
-        #     background = torch.ones((image.shape[0] // args.downsample, image.shape[1] // args.downsample), dtype=torch.bool)
         for mask in detections.mask:
             mask_score = torch.from_numpy(mask).float()
 
@@ -139,9 +126,7 @@ if __name__ == '__main__':
                 mask_score[mask_score >= 0.5] = 1
                 mask_score[mask_score != 1] = 0
             mask_score = mask_score.bool()
-            # background = background & ~mask_score
             mask_list.append(mask_score)
-        # mask_list.append(background)
         if len(mask_list)!=0:
             masks = torch.stack(mask_list, dim=0)
             torch.save(masks.permute(0, 2, 1).flip(1), os.path.join(masks_path, f'{os.path.splitext(os.path.basename(image_name))[0]}.pt')) # bool[masks, h, w]

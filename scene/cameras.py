@@ -16,7 +16,7 @@ from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
-                 image_name, uid, cx = None, cy = None, features = None, masks = None, mask_scales = None,
+                 image_name, uid, cx = None, cy = None, features = None, masks = None,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda"
                  ):
         super(Camera, self).__init__()
@@ -42,7 +42,6 @@ class Camera(nn.Module):
 
         self.original_features = features
         self.original_masks = masks
-        self.mask_scales = mask_scales
 
         # a dirty hack to make sure that the feature width is always 200
         self.feature_width = 100
