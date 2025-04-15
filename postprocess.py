@@ -45,7 +45,7 @@ parser.add_argument("--clean", action='store_true')
 parser.add_argument("--k", type=int, default=256)
 parser.add_argument("--feature_ratio", type=float, default=0.5)
 parser.add_argument("--instance_threshold", type=float, default=0.3)
-parser.add_argument("--label_threshold", type=float, default=0.5)
+parser.add_argument("--background_threshold", type=float, default=0.5)
 parser.add_argument("--scale_threshold", type=float, default=0.8)
 parser.add_argument("--opcity_threshold", type=float, default=0.01)
 parser.add_argument("--sample_num", type=int, default=10000)
@@ -183,22 +183,18 @@ for i, camera in tqdm(list(enumerate(camera_list))):
     for instance in torch.unique(point_labels).tolist():
         vote[instance][background_label]+=(vote_for_background_label==instance).sum().item()
 
-instance_ratio = {}
-for instance, votes in vote.items():
+def get_class(classes, votes):
     votes = np.array(votes)
-    votes = votes[:-1].sum()/votes.sum()
-    instance_ratio[instance] = votes
-
-def get_class(classes, ratio:np.ndarray):
-    if ratio.max()<args.label_threshold:
+    ratio = votes/votes.sum()
+    if ratio[-1] == ratio.max() and ratio[-1]>args.background_threshold:
         return 'background'
-    return classes[ratio.argmax()]
+    return classes[ratio[:-1].argmax()]
 
 output = dict()
 output['point_labels'] = point_labels.tolist()
 output['is_big_gaussian'] = is_big_gaussian.tolist()
 output['is_transparent_gaussian'] = is_transparent_gaussian.tolist()
-output['instances'] = {instance: {'class': get_class(args.classes, ratio)} for instance, ratio in instance_ratio.items()}
+output['instances'] = {instance: {'class': get_class(args.classes, votes)} for instance, votes in vote.items()}
 output['instances'] = {k: v for k, v in output['instances'].items() if v.get('class') in args.classes}
 with open(args.json_path,'w') as f:
     json.dump(output,f)
