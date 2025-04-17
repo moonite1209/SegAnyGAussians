@@ -268,7 +268,6 @@ class GaussianSplattingGUI:
         self.reload_flag = False        # reload the whole scene / point cloud
         self.object_seg_id = 0          # to store the segmented object with increasing index order (path at: ./)
         self.cluster_in_3D_flag = False
-        self.label = 0
 
         self.render_mode_rgb = False
         self.render_mode_similarity = False

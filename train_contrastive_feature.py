@@ -162,7 +162,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             viewpoint_cam = viewpoint_stack[0]
         else:
             viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-        while viewpoint_cam.original_masks==None:
+        while viewpoint_cam.original_masks==None or len(viewpoint_cam.original_masks)==0:
             if not viewpoint_stack:
                 viewpoint_stack = scene.getTrainCameras().copy()
             
