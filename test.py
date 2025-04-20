@@ -213,12 +213,37 @@ def test_dinov2():
 
     print(outputs['last_hidden_state'].shape)
 
+def convert_gs_to_splm(input: str, output: str):
+    from plyfile import PlyData, PlyElement
+    plydata = PlyData.read(input)
+    elements: PlyElement = plydata.elements[0]
+    data = elements.data
+    vertex_element = np.empty((elements.count),dtype=[
+        ('x', 'f4'),
+        ('y', 'f4'),
+        ('z', 'f4'),
+        ('red', 'u1'),
+        ('green', 'u1'),
+        ('blue', 'u1'),
+        ('alpha', 'u1'),
+    ])
+    vertex_element[:] = list(zip(
+        data['x'], 
+        data['y'], 
+        data['z'], 
+        (data['f_dc_0'].clip(0,1)*255).astype('u1'),
+        (data['f_dc_1'].clip(0,1)*255).astype('u1'),
+        (data['f_dc_2'].clip(0,1)*255).astype('u1'),
+        np.ones((elements.count), 'u1'), strict=True))
+    vertex_element = PlyElement.describe(vertex_element, 'vertex')
+    PlyData([vertex_element]).write(output)
 def main():
     # pth_to_json()
-    sam_masks_rgb()
+    # sam_masks_rgb()
     # pick_image()
     # test_clip()
     # test_dinov2()
+    convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/282/point_cloud/iteration_30000/scene_point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/282.ply')
 
 if __name__ =='__main__':
     main()
