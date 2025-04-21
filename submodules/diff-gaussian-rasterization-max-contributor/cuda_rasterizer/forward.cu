@@ -271,6 +271,7 @@ renderCUDA(
 	uint32_t* __restrict__ n_contrib,
 	int* __restrict__ max_contributor,
 	float* __restrict__ max_contribute,
+	float* __restrict__ contribute,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color)
 {
@@ -357,12 +358,12 @@ renderCUDA(
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
-
-			T = test_T;
+			atomicAdd(&contribute[collected_id[j]], alpha * T);
 			if(alpha * T > max_weight){
 				max_weight = alpha * T;
 				max_id = collected_id[j];
 			}
+			T = test_T;
 			// Keep track of last range entry to update this
 			// pixel.
 			last_contributor = contributor;
@@ -394,6 +395,7 @@ void FORWARD::render(
 	uint32_t* n_contrib,
 	int* max_contributor,
 	float* max_contribute,
+	float* contribute,
 	const float* bg_color,
 	float* out_color)
 {
@@ -408,6 +410,7 @@ void FORWARD::render(
 		n_contrib,
 		max_contributor,
 		max_contribute,
+		contribute,
 		bg_color,
 		out_color);
 }

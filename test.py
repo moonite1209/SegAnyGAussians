@@ -215,6 +215,7 @@ def test_dinov2():
 
 def convert_gs_to_splm(input: str, output: str):
     from plyfile import PlyData, PlyElement
+    SH_C0 = 0.28209479177387814
     plydata = PlyData.read(input)
     elements: PlyElement = plydata.elements[0]
     data = elements.data
@@ -231,9 +232,9 @@ def convert_gs_to_splm(input: str, output: str):
         data['x'], 
         data['y'], 
         data['z'], 
-        (data['f_dc_0'].clip(0,1)*255).astype('u1'),
-        (data['f_dc_1'].clip(0,1)*255).astype('u1'),
-        (data['f_dc_2'].clip(0,1)*255).astype('u1'),
+        ((data['f_dc_0']*SH_C0+0.5).clip(0,1)*255).astype('u1'),
+        ((data['f_dc_1']*SH_C0+0.5).clip(0,1)*255).astype('u1'),
+        ((data['f_dc_2']*SH_C0+0.5).clip(0,1)*255).astype('u1'),
         np.ones((elements.count), 'u1'), strict=True))
     vertex_element = PlyElement.describe(vertex_element, 'vertex')
     PlyData([vertex_element]).write(output)
@@ -243,7 +244,9 @@ def main():
     # pick_image()
     # test_clip()
     # test_dinov2()
-    convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/282/point_cloud/iteration_30000/scene_point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/282.ply')
+    convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/suzongbangongshi/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/suzongbangongshi.ply')
+    convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/juweihui/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/juweihui.ply')
+    convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/hualang/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/hualang.ply')
 
 if __name__ =='__main__':
     main()

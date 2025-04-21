@@ -157,6 +157,7 @@ print(f'knn finish')
 # point_labels = torch.load(os.path.join(args.model_path, 'point_labels.pth'))
 
 vote = {instance: [0 for _ in range(len(args.classes)+1)] for instance in torch.unique(point_labels).tolist()} 
+contribute = torch.zeros((point_xyz.shape[0]), dtype=torch.float32, device=point_labels.device)
 for i, camera in tqdm(list(enumerate(camera_list))):
     with open(args.progress_path, 'w') as f:
         f.write(str(75+(i+1)*25//len(camera_list)))
@@ -171,6 +172,7 @@ for i, camera in tqdm(list(enumerate(camera_list))):
     render_pkg = render_with_max_contributor(camera, gs_model, args, bg_color)
     max_contributor = render_pkg['max_contributor'].to(point_labels.device)
     max_contribute = render_pkg['max_contribute'].to(point_labels.device)
+    contribute += render_pkg['contribute'].to(point_labels.device)
     max_instance_contributor = point_labels[max_contributor]
     background_label = len(args.classes)
     background = torch.ones_like(masks[0])
@@ -194,6 +196,7 @@ output = dict()
 output['point_labels'] = point_labels.tolist()
 output['is_big_gaussian'] = is_big_gaussian.tolist()
 output['is_transparent_gaussian'] = is_transparent_gaussian.tolist()
+output['contribute'] = contribute.tolist()
 output['instances'] = {instance: {'class': get_class(args.classes, votes)} for instance, votes in vote.items()}
 output['instances'] = {k: v for k, v in output['instances'].items() if v.get('class') in args.classes}
 with open(args.json_path,'w') as f:

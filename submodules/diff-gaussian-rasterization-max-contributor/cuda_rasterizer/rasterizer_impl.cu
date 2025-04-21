@@ -219,6 +219,7 @@ int CudaRasterizer::Rasterizer::forward(
 	int* radii,
 	int* max_contributor,
 	float* max_contribute,
+	float* contribute,
 	bool debug)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
@@ -342,6 +343,7 @@ int CudaRasterizer::Rasterizer::forward(
 		imgState.n_contrib,
 		max_contributor,
 		max_contribute,
+		contribute,
 		background,
 		out_color), debug)
 
