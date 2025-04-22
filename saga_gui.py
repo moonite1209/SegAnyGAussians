@@ -399,9 +399,9 @@ class GaussianSplattingGUI:
             
             dpg.add_text("\nFilter option: ", tag="filter")
             dpg.add_checkbox(label="Label", callback=render_filter_label_callback, user_data="Some Data")
-            dpg.add_checkbox(label="Label", callback=render_filter_scale_callback, user_data="Some Data")
-            dpg.add_checkbox(label="Label", callback=render_filter_opacity_callback, user_data="Some Data")
-            dpg.add_checkbox(label="Label", callback=render_filter_weight_callback, user_data="Some Data")
+            dpg.add_checkbox(label="Scale", callback=render_filter_scale_callback, user_data="Some Data")
+            dpg.add_checkbox(label="Opacity", callback=render_filter_opacity_callback, user_data="Some Data")
+            dpg.add_checkbox(label="Weight", callback=render_filter_weight_callback, user_data="Some Data")
 
             dpg.add_text("\nSegment option: ", tag="seg")
             dpg.add_checkbox(label="clickmode", callback=clickmode_callback, user_data="Some Data")
@@ -585,7 +585,7 @@ class GaussianSplattingGUI:
         if self.render_filter_opacity:
             filtered_mask |= self.is_transparent_gaussian
         if self.render_filter_weight:
-            filtered_mask |= self.contribute<0.5
+            filtered_mask |= self.contribute<self.contribute.median()*10
         scene_outputs = render(view_camera, self.engine['scene'], self.opt, self.bg_color, filtered_mask=filtered_mask)
         feature_outputs = render_contrastive_feature(view_camera, self.engine['feature'], self.opt, self.bg_feature)
         if self.cluster_in_3D_flag:
