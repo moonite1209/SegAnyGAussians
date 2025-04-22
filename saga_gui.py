@@ -233,6 +233,7 @@ class GaussianSplattingGUI:
         self.point_labels = torch.tensor(self.json['point_labels'])
         self.is_big_gaussian = torch.tensor(self.json['is_big_gaussian'])
         self.is_transparent_gaussian = torch.tensor(self.json['is_transparent_gaussian'])
+        self.contribute = torch.tensor(self.json['contribute'])
         self.label = int(list(self.json['instances'].keys())[0])
         print("loading json file done.")
 
@@ -273,7 +274,11 @@ class GaussianSplattingGUI:
         self.render_mode_similarity = False
         self.render_mode_pca = False
         self.render_mode_cluster = False
-        self.render_mode_label = False
+
+        self.render_filter_label = False
+        self.render_filter_scale = False
+        self.render_filter_opacity = False
+        self.render_filter_weight = False
 
         self.save_flag = False
     def __del__(self):
@@ -369,8 +374,15 @@ class GaussianSplattingGUI:
             self.render_mode_pca = not self.render_mode_pca
         def render_mode_cluster_callback(sender):
             self.render_mode_cluster = not self.render_mode_cluster
-        def render_mode_label_callback(sender):
-            self.render_mode_label = not self.render_mode_label
+
+        def render_filter_label_callback(sender):
+            self.render_filter_label = not self.render_filter_label
+        def render_filter_scale_callback(sender):
+            self.render_filter_scale = not self.render_filter_scale
+        def render_filter_opacity_callback(sender):
+            self.render_filter_opacity = not self.render_filter_opacity
+        def render_filter_weight_callback(sender):
+            self.render_filter_weight = not self.render_filter_weight
         # control window
         with dpg.window(label="Control", tag="_control_window", width=300, height=550, pos=[self.window_width+10, 0]):
 
@@ -384,8 +396,12 @@ class GaussianSplattingGUI:
             dpg.add_checkbox(label="PCA", callback=render_mode_pca_callback, user_data="Some Data")
             dpg.add_checkbox(label="SIMILARITY", callback=render_mode_similarity_callback, user_data="Some Data")
             dpg.add_checkbox(label="3D CLUSTER", callback=render_mode_cluster_callback, user_data="Some Data")
-            dpg.add_checkbox(label="Label", callback=render_mode_label_callback, user_data="Some Data")
             
+            dpg.add_text("\nFilter option: ", tag="filter")
+            dpg.add_checkbox(label="Label", callback=render_filter_label_callback, user_data="Some Data")
+            dpg.add_checkbox(label="Label", callback=render_filter_scale_callback, user_data="Some Data")
+            dpg.add_checkbox(label="Label", callback=render_filter_opacity_callback, user_data="Some Data")
+            dpg.add_checkbox(label="Label", callback=render_filter_weight_callback, user_data="Some Data")
 
             dpg.add_text("\nSegment option: ", tag="seg")
             dpg.add_checkbox(label="clickmode", callback=clickmode_callback, user_data="Some Data")
@@ -561,8 +577,16 @@ class GaussianSplattingGUI:
 
     @torch.no_grad()
     def fetch_data(self, view_camera):
-        
-        scene_outputs = render(view_camera, self.engine['scene'], self.opt, self.bg_color)
+        filtered_mask = torch.zeros_like((self.is_big_gaussian))
+        if self.render_filter_label:
+            filtered_mask |= (~(self.point_labels==self.label))
+        if self.render_filter_scale:
+            filtered_mask |= self.is_big_gaussian
+        if self.render_filter_opacity:
+            filtered_mask |= self.is_transparent_gaussian
+        if self.render_filter_weight:
+            filtered_mask |= self.contribute<0.5
+        scene_outputs = render(view_camera, self.engine['scene'], self.opt, self.bg_color, filtered_mask=filtered_mask)
         feature_outputs = render_contrastive_feature(view_camera, self.engine['feature'], self.opt, self.bg_feature)
         if self.cluster_in_3D_flag:
             self.cluster_in_3D_flag = False
@@ -699,9 +723,6 @@ class GaussianSplattingGUI:
                     return torch.from_numpy(res).cuda()
                 # self.rendered_cluster = filter2d(self.rendered_cluster)
                 self.render_buffer = self.rendered_cluster.cpu().numpy().reshape(-1) if self.render_buffer is None else self.render_buffer + self.rendered_cluster.cpu().numpy().reshape(-1)
-            render_num += 1
-        if self.render_mode_label:
-            self.render_buffer = render(view_camera, self.engine['scene'], self.opt, self.bg_color, filtered_mask=(~(self.point_labels==self.label)))['render'].permute(1,2,0).cpu().numpy().reshape(-1)
             render_num += 1
         if self.render_mode_similarity:
             if score_map is not None:

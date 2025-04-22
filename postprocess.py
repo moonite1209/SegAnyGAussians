@@ -157,7 +157,7 @@ print(f'knn finish')
 # point_labels = torch.load(os.path.join(args.model_path, 'point_labels.pth'))
 
 vote = {instance: [0 for _ in range(len(args.classes)+1)] for instance in torch.unique(point_labels).tolist()} 
-contribute = torch.zeros((point_xyz.shape[0]), dtype=torch.float32, device=point_labels.device)
+contribute = torch.zeros((point_xyz.shape[0]), dtype=torch.float32, device=point_labels.device, requires_grad=False)
 for i, camera in tqdm(list(enumerate(camera_list))):
     with open(args.progress_path, 'w') as f:
         f.write(str(75+(i+1)*25//len(camera_list)))
@@ -170,9 +170,9 @@ for i, camera in tqdm(list(enumerate(camera_list))):
     masks = masks.bool()
     labels = torch.load(os.path.join(args.labels_path, f'{camera.image_name}.pt'))
     render_pkg = render_with_max_contributor(camera, gs_model, args, bg_color)
-    max_contributor = render_pkg['max_contributor'].to(point_labels.device)
-    max_contribute = render_pkg['max_contribute'].to(point_labels.device)
-    contribute += render_pkg['contribute'].to(point_labels.device)
+    max_contributor = render_pkg['max_contributor'].detach().to(point_labels.device)
+    max_contribute = render_pkg['max_contribute'].detach().to(point_labels.device)
+    contribute += render_pkg['contribute'].detach().to(point_labels.device)
     max_instance_contributor = point_labels[max_contributor]
     background_label = len(args.classes)
     background = torch.ones_like(masks[0])
