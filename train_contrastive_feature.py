@@ -151,7 +151,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
 
     for iteration in range(first_iter, opt.iterations + 1):
         with open(args.progress_path, 'w') as f:
-            f.write(str(50+(iteration)*25//opt.iterations))
+            f.write(str((iteration)*100//opt.iterations))
         iter_start.record()
 
         # Pick a random Camera

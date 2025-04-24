@@ -160,7 +160,7 @@ vote = {instance: [0 for _ in range(len(args.classes)+1)] for instance in torch.
 contribute = torch.zeros((point_xyz.shape[0]), dtype=torch.float32, device=point_labels.device, requires_grad=False)
 for i, camera in tqdm(list(enumerate(camera_list))):
     with open(args.progress_path, 'w') as f:
-        f.write(str(75+(i+1)*25//len(camera_list)))
+        f.write(str((i+1)*100//len(camera_list)))
     if not os.path.exists(os.path.join(args.masks_path, f'{camera.image_name}.pt')):
         continue
     masks = torch.load(os.path.join(args.masks_path, f'{camera.image_name}.pt')).float()
