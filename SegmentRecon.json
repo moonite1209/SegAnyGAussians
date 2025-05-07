@@ -1,0 +1,53 @@
+{
+    "name": "语义识别流程",
+    "description": "4 stages",
+    "logpath": "{{Workspace}}/{{ProjectId}}/{{SceneId}}/Logs/Saga",
+    "assign": "127.0.0.1",
+    "use_idle": false,
+    "stages": [
+      {
+        "arguments": "/home/farsee/dev/3dMass/saga/SegAnyGAussians/grounded_SAM_masks.py --downsample 2 --images_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/fastRecon/dense/sparse/0/images --masks_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/masks --labels_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/labels --sam_checkpoint_path /home/farsee/dev/3dMass/saga/weights/sam_vit_h_4b8939.pth --groundingdino_checkpoint_path /home/farsee/dev/3dMass/saga/weights/groundingdino_swint_ogc.pth --groundingdino_config_path /home/farsee/dev/3dMass/saga/weights/GroundingDINO_SwinT_OGC.py  --progress_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/progress1 ",
+        "command": "/home/farsee/miniconda3/envs/saga/bin/python",
+        "cuda": false,
+        "description": "stage 1",
+        "distribute": "",
+        "name": "提取masks",
+        "prefer": "memory",
+        "percent_begin": 0,
+        "percent_end": 30
+      },
+      {
+        "arguments": "/home/farsee/dev/3dMass/saga/SegAnyGAussians/get_scale.py --sh_degree 0 --masks_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/masks/ --point_cloud_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/output_models/point_cloud/iteration_30000/point_cloud.ply --sparse_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/fastRecon/dense/sparse/0/ --images_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/fastRecon/dense/sparse/0/images --mask_scales_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/mask_scales  --progress_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/progress2 ",
+        "command": "/home/farsee/miniconda3/envs/saga/bin/python",
+        "cuda": false,
+        "description": "stage 2",
+        "distribute": "",
+        "name": "获取缩放",
+        "prefer": "memory",
+        "percent_begin": 30,
+        "percent_end": 50
+      },
+      {
+        "arguments": "/home/farsee/dev/3dMass/saga/SegAnyGAussians/train_contrastive_feature.py  --sh_degree 0 --feature_dim 32 --images_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/fastRecon/dense/sparse/0/images --sparse_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/fastRecon/dense/sparse/0/ --masks_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/masks --mask_scales_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/mask_scales --point_cloud {{Workspace}}/{{ProjectId}}/{{SceneId}}/output_models/point_cloud/iteration_30000/point_cloud.ply --contrastive_feature_point_cloud_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/contrastive_feature_point_cloud.ply --scale_gate_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/scale_gate.pt --num_sampled_rays 1000  --progress_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/progress3",
+        "command": "/home/farsee/miniconda3/envs/saga/bin/python",
+        "cuda": false,
+        "description": "stage 3",
+        "distribute": "",
+        "name": "训练",
+        "prefer": "memory",
+        "percent_begin": 50,
+        "percent_end": 80
+      },
+      {
+        "arguments": "/home/farsee/dev/3dMass/saga/SegAnyGAussians/postprocess.py --sh_degree 0 --feature_dim 32 --images_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/fastRecon/dense/sparse/0/images --sparse_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/fastRecon/dense/sparse/0/ --masks_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/masks --labels_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/labels --mask_scales_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/mask_scales --point_cloud {{Workspace}}/{{ProjectId}}/{{SceneId}}/output_models/point_cloud/iteration_30000/point_cloud.ply --contrastive_feature_point_cloud_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/contrastive_feature_point_cloud.ply --scale_gate_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/scale_gate.pt --json_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/output.json --clean --progress_path {{Workspace}}/{{ProjectId}}/{{SceneId}}/saga/progress4",
+        "command": "/home/farsee/miniconda3/envs/saga/bin/python",
+        "cuda": false,
+        "description": "stage 4",
+        "distribute": "",
+        "name": "发布进度",
+        "prefer": "memory",
+        "percent_begin": 80,
+        "percent_end": 100
+      }
+    ]
+  }
