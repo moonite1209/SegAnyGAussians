@@ -49,7 +49,7 @@ parser.add_argument("--background_threshold", type=float, default=0.5)
 parser.add_argument("--scale_threshold", type=float, default=0.8)
 parser.add_argument("--opcity_threshold", type=float, default=0.01)
 parser.add_argument("--sample_num", type=int, default=10000)
-parser.add_argument("--classes", nargs="+", type=str, default=['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed'])
+parser.add_argument("--classes", nargs="+", type=str, default=['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person'])
 args = parser.parse_args(sys.argv[1:])
 bg_color = torch.tensor([1,1,1] if args.white_background else [0, 0, 0], dtype=torch.float32, device="cuda")
 torch.manual_seed(42)
@@ -198,7 +198,7 @@ output['is_big_gaussian'] = is_big_gaussian.tolist()
 output['is_transparent_gaussian'] = is_transparent_gaussian.tolist()
 output['contribute'] = contribute.tolist()
 output['instances'] = {instance: {'class': get_class(args.classes, votes)} for instance, votes in vote.items()}
-output['instances'] = {k: v for k, v in output['instances'].items() if v.get('class') in args.classes}
+output['instances'] = {k: v for k, v in output['instances'].items() if v.get('class') in ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed']}
 with open(args.json_path,'w') as f:
     json.dump(output,f)
 if(args.clean):
