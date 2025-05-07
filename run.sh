@@ -19,6 +19,6 @@ for base_path in "$@"; do
     groundingdino_config_path="../weights/GroundingDINO_SwinT_OGC.py"
 
     python grounded_SAM_masks.py --progress_path $progress_path --images_path $images_path --masks_path $masks_path --labels_path $labels_path --sam_checkpoint_path $sam_checkpoint_path --groundingdino_checkpoint_path $groundingdino_checkpoint_path --groundingdino_config_path $groundingdino_config_path --downsample 1 && \
-    python train_contrastive_feature.py --progress_path $progress_path --sh_degree 0 --feature_dim 32 --images_path $images_path --sparse_path $sparse_path --masks_path $masks_path --point_cloud_path $point_cloud_path --contrastive_feature_point_cloud_path $contrastive_feature_point_cloud_path --num_sampled_rays 1000 && \
-    python postprocess.py --progress_path $progress_path --sh_degree 0 --feature_dim 32 --images_path $images_path --sparse_path $sparse_path --masks_path $masks_path --labels_path $labels_path --point_cloud_path $point_cloud_path --contrastive_feature_point_cloud_path $contrastive_feature_point_cloud_path --json_path $json_path
+    python train_contrastive_feature.py --progress_path $progress_path --sh_degree 0 --feature_dim 32 --images_path $images_path --sparse_path $sparse_path --masks_path $masks_path --point_cloud_path $point_cloud_path --contrastive_feature_point_cloud_path $contrastive_feature_point_cloud_path --data_device cpu --num_sampled_rays 1000 && \
+    python postprocess.py --progress_path $progress_path --sh_degree 0 --feature_dim 32 --images_path $images_path --sparse_path $sparse_path --masks_path $masks_path --labels_path $labels_path --point_cloud_path $point_cloud_path --contrastive_feature_point_cloud_path $contrastive_feature_point_cloud_path --json_path $json_path --data_device cpu
 done
