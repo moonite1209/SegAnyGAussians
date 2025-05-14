@@ -153,10 +153,18 @@ end_time = datetime.now()
 elapsed_time = end_time - start_time
 print(f'{elapsed_time=}, {len(torch.unique(point_labels))=}') # 89, pytorch3d.ops.knn_points=49
 print(f'knn finish')
+new_point_labels = torch.zeros_like(point_labels)
+label = -1
+new_point_labels[point_labels==label] = label
+label += 1
+for instance in torch.unique(point_labels).tolist()[1:]:
+    mask = (point_labels == instance).cpu()
+    cluster_labels = clusterer.fit_predict(torch.clamp(torch.norm(point_xyz[mask][:,None,:] - point_xyz[mask][None,:,:], dim=-1), 0).numpy().astype(np.float64))
+
 # torch.save(point_labels, os.path.join(args.model_path, 'point_labels.pth'))
 # point_labels = torch.load(os.path.join(args.model_path, 'point_labels.pth'))
 
-vote = {instance: [0 for _ in range(len(args.classes)+1)] for instance in torch.unique(point_labels).tolist()} 
+vote = {instance: [0 for _ in range(len(args.classes)+1)] for instance in torch.unique(point_labels).tolist()}
 contribute = torch.zeros((point_xyz.shape[0]), dtype=torch.float32, device=point_labels.device, requires_grad=False)
 for i, camera in tqdm(list(enumerate(camera_list))):
     with open(args.progress_path, 'w') as f:
@@ -195,8 +203,8 @@ def get_class(classes, votes):
 output = dict()
 output['point_labels'] = point_labels.tolist()
 output['is_big_gaussian'] = is_big_gaussian.tolist()
-output['is_transparent_gaussian'] = is_transparent_gaussian.tolist()
-output['contribute'] = contribute.tolist()
+# output['is_transparent_gaussian'] = is_transparent_gaussian.tolist()
+# output['contribute'] = contribute.tolist()
 output['instances'] = {instance: {'class': get_class(args.classes, votes)} for instance, votes in vote.items()}
 output['instances'] = {k: v for k, v in output['instances'].items() if v.get('class') in ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed']}
 with open(args.json_path,'w') as f:
