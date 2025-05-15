@@ -56,7 +56,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if filtered_mask is not None:
         new_opacity = opacity.detach().clone()
         new_opacity[filtered_mask, :] = 0
-        # new_opacity[~filtered_mask, :] = 1
+        new_opacity[~filtered_mask, :] = 1
         opacity = new_opacity
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from

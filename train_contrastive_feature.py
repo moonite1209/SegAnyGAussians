@@ -16,6 +16,7 @@ from gaussian_renderer import render_contrastive_feature
 import sys
 from scene import Scene, GaussianModel, FeatureGaussianModel
 from utils.general_utils import safe_state
+from utils.mask_utils import on_boundary
 import uuid
 from tqdm import tqdm
 from argparse import ArgumentParser, Namespace
@@ -25,6 +26,7 @@ import numpy as np
 
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 import pytorch3d.ops
 
@@ -201,19 +203,20 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             gt_corrs = torch.einsum('nh,nj->hj', gt_vec, gt_vec)
             gt_corrs[gt_corrs != 0] = 1 # float[sampled pixels, sampled pixels], a pixel in the same mask with another pixel
 
-        render_pkg_feat = render_contrastive_feature(viewpoint_cam, feature_gaussians, pipe, background, norm_point_features=True, smooth_type = 'traditional', smooth_weights=torch.softmax(smooth_weights, dim = -1) if smooth_weights is not None else None, smooth_K = opt.smooth_K)
-        rendered_features = render_pkg_feat["render"]
+        render_pkg = render_contrastive_feature(viewpoint_cam, feature_gaussians, pipe, background, norm_point_features=True, smooth_type = 'traditional', smooth_weights=torch.softmax(smooth_weights, dim = -1) if smooth_weights is not None else None, smooth_K = opt.smooth_K)
+        rendered_features = render_pkg["render"]
+        visibility_filter = render_pkg["visibility_filter"]
 
         rendered_feature_norm = rendered_features.norm(dim = 0, p=2).mean()
         rendered_feature_norm_reg = (1-rendered_feature_norm)**2 # regularization term, keep aligned on a ray
 
-        rendered_features = torch.nn.functional.interpolate(rendered_features.unsqueeze(0), viewpoint_cam.original_masks.shape[-2:], mode='bilinear').squeeze(0)
+        rendered_features = F.interpolate(rendered_features.unsqueeze(0), viewpoint_cam.original_masks.shape[-2:], mode='bilinear').squeeze(0)
 
         sampled_feature_with_scale = rendered_features[:,sampled_ray] # float[sampled scales, C, sampled pixels]
 
         scale_conditioned_features_sam = sampled_feature_with_scale.permute([1,0]) # float[sampled pixels, C]
 
-        scale_conditioned_features_sam = torch.nn.functional.normalize(scale_conditioned_features_sam, dim=-1, p=2)
+        scale_conditioned_features_sam = F.normalize(scale_conditioned_features_sam, dim=-1, p=2)
         corr = torch.einsum('ac,bc->ab', scale_conditioned_features_sam, scale_conditioned_features_sam) # sampled pixel to sampled pixel similarity, float[sampled pixels, sampled pixels]
 
         sampled_mask_positive = gt_corrs == 1 # two sampled pixels belong to different mask in any sampled scales, bool[sampled pixels, sampled pixels]
@@ -235,10 +238,21 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         sample_mask = uniform_sample(feature_gaussians.get_xyz, opt.distance_sample_num)
         sample_xyz = std_point_xyz[sample_mask]
         sample_features = feature_gaussians.get_point_features[sample_mask]
-        sample_scaled_features = torch.nn.functional.normalize(sample_features, dim=-1)
+        sample_scaled_features = F.normalize(sample_features, dim=-1)
         ptp_xyz_distance = torch.norm(sample_xyz[:,None,:] - sample_xyz[None,:,:], dim=-1) # float[fps,fps]
         ptp_feature_sim = torch.einsum('ac, bc -> ab', sample_scaled_features, sample_scaled_features) # float[fps,fps]
         distance_loss = (ptp_xyz_distance*torch.clamp(ptp_feature_sim,0)).mean()
+
+        # distance_loss = torch.tensor(0.,device='cuda')
+        # if iteration > opt.iterations//2:
+        #     for sam_mask in sam_masks:
+        #         sam_mask = sam_mask.bool()
+        #         if on_boundary(sam_mask):
+        #             continue
+        #         mask_feature = F.normalize(F.normalize(rendered_features[:,sam_mask].permute((1,0)),dim=-1).mean(dim=0,keepdim=True),dim=-1)
+        #         invisable_feature = F.normalize(feature_gaussians.get_point_features[~visibility_filter],dim=-1)
+        #         distance_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature)).mean()
+
 
         if opt.positive_weight == -1:
             opt.positive_weight = 2*(sampled_mask_negative.sum()/example_num)

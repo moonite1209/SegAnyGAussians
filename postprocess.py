@@ -145,7 +145,7 @@ def filter3d(pos, label, k):
         # print(f'{bin}\n{counts}')
         new_label.append(bin[counts.index(max(counts))])
     print('finish filter3d')
-    return torch.tensor(new_label).cuda()
+    return torch.tensor(new_label)
 start_time = datetime.now()
 if args.k>0:
     point_labels = filter3d(point_xyz, point_labels, args.k)
@@ -153,16 +153,18 @@ end_time = datetime.now()
 elapsed_time = end_time - start_time
 print(f'{elapsed_time=}, {len(torch.unique(point_labels))=}') # 89, pytorch3d.ops.knn_points=49
 print(f'knn finish')
-new_point_labels = torch.zeros_like(point_labels)
-label = -1
-new_point_labels[point_labels==label] = label
-label += 1
-for instance in torch.unique(point_labels).tolist()[1:]:
-    mask = (point_labels == instance).cpu()
-    cluster_labels = clusterer.fit_predict(torch.clamp(torch.norm(point_xyz[mask][:,None,:] - point_xyz[mask][None,:,:], dim=-1), 0).numpy().astype(np.float64))
-
-# torch.save(point_labels, os.path.join(args.model_path, 'point_labels.pth'))
-# point_labels = torch.load(os.path.join(args.model_path, 'point_labels.pth'))
+# new_point_labels = torch.zeros_like(point_labels)
+# label = -1
+# new_point_labels[point_labels==label] = label
+# label += 1
+# for instance in tqdm(torch.unique(point_labels).tolist()[1:]):
+#     mask = (point_labels == instance)
+#     cluster_labels = torch.from_numpy(clusterer.fit_predict(torch.clamp(torch.norm(point_xyz[mask][:,None,:] - point_xyz[mask][None,:,:], dim=-1), 0).numpy().astype(np.float64)))
+#     for pl in torch.unique(cluster_labels).tolist()[1:]:
+#         cluster_labels[cluster_labels==pl] = label
+#         label+=1
+#     new_point_labels[mask] = cluster_labels
+# point_labels = new_point_labels
 
 vote = {instance: [0 for _ in range(len(args.classes)+1)] for instance in torch.unique(point_labels).tolist()}
 contribute = torch.zeros((point_xyz.shape[0]), dtype=torch.float32, device=point_labels.device, requires_grad=False)
@@ -203,8 +205,8 @@ def get_class(classes, votes):
 output = dict()
 output['point_labels'] = point_labels.tolist()
 output['is_big_gaussian'] = is_big_gaussian.tolist()
-# output['is_transparent_gaussian'] = is_transparent_gaussian.tolist()
-# output['contribute'] = contribute.tolist()
+output['is_transparent_gaussian'] = is_transparent_gaussian.tolist()
+output['contribute'] = contribute.tolist()
 output['instances'] = {instance: {'class': get_class(args.classes, votes)} for instance, votes in vote.items()}
 output['instances'] = {k: v for k, v in output['instances'].items() if v.get('class') in ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed']}
 with open(args.json_path,'w') as f:
