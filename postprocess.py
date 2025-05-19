@@ -44,7 +44,7 @@ parser.add_argument("--progress_path", type=str, required=True)
 parser.add_argument("--clean", action='store_true')
 parser.add_argument("--k", type=int, default=256)
 parser.add_argument("--feature_ratio", type=float, default=0.5)
-parser.add_argument("--instance_threshold", type=float, default=0.3)
+parser.add_argument("--instance_threshold", type=float, default=0.5)
 parser.add_argument("--background_threshold", type=float, default=0.5)
 parser.add_argument("--scale_threshold", type=float, default=0.8)
 parser.add_argument("--opcity_threshold", type=float, default=0.01)
@@ -165,6 +165,35 @@ print(f'knn finish')
 #         label+=1
 #     new_point_labels[mask] = cluster_labels
 # point_labels = new_point_labels
+
+new_point_labels = torch.zeros_like(point_labels)
+label = -1
+new_point_labels[point_labels==label] = label
+label += 1
+for instance in tqdm(torch.unique(point_labels).tolist()[1:]):
+    instace_mask = (point_labels == instance)
+    instance_point_xyz = point_xyz[instace_mask]
+    sampled_mask = uniform_sample(instance_point_xyz, args.sample_num)
+    sampled_point_xyz = instance_point_xyz[sampled_mask]
+    sampled_point_xyz_distance = torch.clamp(torch.norm(sampled_std_point_xyz[:,None,:] - sampled_std_point_xyz[None,:,:], dim=-1), 0)
+    cluster_labels = clusterer.fit_predict(sampled_point_xyz_distance.numpy().astype(np.float64))
+    xyz_cluster_centers = torch.zeros(len(np.unique(cluster_labels)) - 1, instance_point_xyz.shape[-1])
+    for i in np.unique(cluster_labels):
+        if i<0:
+            continue
+        xyz_cluster_centers[i] = sampled_point_xyz[cluster_labels == i].mean(dim = 0)
+    point_xyz_sim = torch.clamp(torch.exp(-torch.norm(instance_point_xyz[:,None,:] - xyz_cluster_centers[None,:,:], dim=-1)), 0, 1)
+    confidence = torch.softmax(point_xyz_sim*10, dim=-1)
+    mask, point_labels = confidence.max(dim=-1)
+    mask = mask>0.5
+    point_labels[~mask] = -1
+    for i in torch.unique(point_labels):
+        if i<0:
+            continue
+        point_labels[point_labels==i] = label
+        label+=1
+    new_point_labels[instace_mask] = point_labels
+point_labels = new_point_labels
 
 vote = {instance: [0 for _ in range(len(args.classes)+1)] for instance in torch.unique(point_labels).tolist()}
 contribute = torch.zeros((point_xyz.shape[0]), dtype=torch.float32, device=point_labels.device, requires_grad=False)
