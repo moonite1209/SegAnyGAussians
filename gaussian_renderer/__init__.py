@@ -389,9 +389,9 @@ def render_with_max_contributor(viewpoint_camera, pc : GaussianModel, pipe, bg_c
 
 from diff_gaussian_rasterization_contrastive_f import GaussianRasterizationSettings as GaussianRasterizationSettingsContrastiveF
 from diff_gaussian_rasterization_contrastive_f import GaussianRasterizer as GaussianRasterizerContrastiveF
-from scene.gaussian_model_ff import FeatureGaussianModel
+from scene.feature_gaussian_model import FeatureGaussianModel
 
-def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, norm_point_features = False, smooth_type = None, smooth_weights = None, smooth_K = 16):
+def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0):
     """
     Render the scene. 
     
@@ -443,19 +443,8 @@ def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
-    shs = None
-    colors_precomp = None
-
-    if smooth_type is None:
-        colors_precomp = pc.get_point_features
-    elif smooth_type == 'multi_res':
-        colors_precomp = pc.get_multi_resolution_smoothed_point_features(smooth_weights = smooth_weights)
-    elif smooth_type == 'traditional':
-        colors_precomp = pc.get_smoothed_point_features(K = smooth_K, dropout=0.5)
-    
-    if norm_point_features:
-        colors_precomp = colors_precomp / (colors_precomp.norm(dim=1, keepdim=True) + 1e-9)
-    # colors_precomp = torch.nn.functional.normalize(colors_precomp, dim=1)
+    shs = pc.get_features
+    colors_precomp = pc.get_instance_features
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     rendered_image, radii = rasterizer(

@@ -141,7 +141,7 @@ class FeatureGaussianModel(GaussianModel):
             l.append('instance_feature_{}'.format(i))
         return l
 
-    def save_ply(self, path, smooth_weights = None, smooth_type = None, smooth_K = None):
+    def save_ply(self, path):
         mkdir_p(os.path.dirname(path))
 
         xyz = self._xyz.detach().cpu().numpy()

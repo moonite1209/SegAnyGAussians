@@ -14,7 +14,7 @@ import torch
 from random import randint
 from gaussian_renderer import render_contrastive_feature, render_with_max_contributor
 import sys
-from scene import Scene, GaussianModel, FeatureGaussianModel
+from scene import FeatureScene, FeatureGaussianModel
 from utils.general_utils import safe_state
 from utils.mask_utils import on_boundary
 import uuid
@@ -90,28 +90,13 @@ def farthest_point_sample(xyz, n_samples):
     mask[centroids] = True
     return mask
 
-# Borrowed from GARField but modified
-def get_quantile_func(scales: torch.Tensor, distribution="normal"):
-    """
-    Use 3D scale statistics to normalize scales -- use quantile transformer.
-    """
-    scales = scales.flatten()
-
-    scales = scales.detach().cpu().numpy()
-
-    # Calculate quantile transformer
-    quantile_transformer = QuantileTransformer(output_distribution=distribution)
-    quantile_transformer = quantile_transformer.fit(scales.reshape(-1, 1))
-
-    def quantile_transformer_func(scales):
-        # This function acts as a wrapper for QuantileTransformer.
-        # QuantileTransformer expects a numpy array, while we have a torch tensor.
-        scales = scales.reshape(-1,1)
-        return torch.Tensor(
-            quantile_transformer.transform(scales.detach().cpu().numpy())
-        ).to(scales.device)
-
-    return quantile_transformer_func
+def pickCamera(cameras):
+    view_stack = None
+    while True:
+        if not view_stack:
+            view_stack = cameras.copy()
+        camera = view_stack.pop(randint(0, len(view_stack)-1))
+        yield camera
 
 def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterations, debug_from):
     print("RFN weight:", opt.rfn)
@@ -123,21 +108,14 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
     dataset.need_masks = True
     dataset.allow_principle_point_shift = False
 
-    gaussians = None #GaussianModel(dataset.sh_degree)
-
     feature_gaussians = FeatureGaussianModel(dataset.feature_dim)
+    feature_gaussians.load_ply(opt.model_path)
 
     sample_rate = 1.0
-    scene = Scene(dataset, gaussians, feature_gaussians, load_iteration=iteration, shuffle=False, target='contrastive_feature', mode='train', sample_rate=sample_rate)
+    scene = FeatureScene(dataset, feature_gaussians, shuffle=False, sample_rate=sample_rate)
 
-    feature_gaussians.change_to_segmentation_mode(opt, "contrastive_feature", fixed_feature=False)
-
-    smooth_weights = None
-
-    del gaussians
-    torch.cuda.empty_cache()
-
-    background = torch.ones([dataset.feature_dim], dtype=torch.float32, device="cuda") if dataset.white_background else torch.zeros([dataset.feature_dim], dtype=torch.float32, device="cuda")
+    background = torch.ones([3], dtype=torch.float32, device="cuda") if dataset.white_background else torch.zeros([3], dtype=torch.float32, device="cuda")
+    background_feature = torch.zeros([dataset.feature_dim], dtype=torch.float32, device="cuda")
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
@@ -149,27 +127,12 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
 
-    for iteration in range(first_iter, opt.iterations + 1):
+    for iteration, viewpoint_cam in zip(range(first_iter, opt.iterations + 1), pickCamera(scene.getTrainCameras())):
         with open(args.progress_path, 'w') as f:
             f.write(str((iteration)*100//opt.iterations))
         iter_start.record()
-
-        # Pick a random Camera
-        if not viewpoint_stack:
-            viewpoint_stack = scene.getTrainCameras().copy()
-        
-        if iteration < -1:
-            viewpoint_cam = viewpoint_stack[0]
-        else:
-            viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-        while viewpoint_cam.original_masks==None or len(viewpoint_cam.original_masks)==0:
-            if not viewpoint_stack:
-                viewpoint_stack = scene.getTrainCameras().copy()
-            
-            if iteration < -1:
-                viewpoint_cam = viewpoint_stack[0]
-            else:
-                viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        if not viewpoint_cam.original_masks:
+            continue
         with torch.no_grad():
             # N_mask, H, W
             sam_masks = viewpoint_cam.original_masks.cuda().float() # float[masks, h, w]
@@ -201,7 +164,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             gt_corrs = torch.einsum('nh,nj->hj', gt_vec, gt_vec)
             gt_corrs[gt_corrs != 0] = 1 # float[sampled pixels, sampled pixels], a pixel in the same mask with another pixel
 
-        render_pkg = render_contrastive_feature(viewpoint_cam, feature_gaussians, pipe, background, norm_point_features=True, smooth_type = 'traditional', smooth_weights=torch.softmax(smooth_weights, dim = -1) if smooth_weights is not None else None, smooth_K = opt.smooth_K)
+        render_pkg = render_contrastive_feature(viewpoint_cam, feature_gaussians, pipe, background_feature)
         max_contributor = render_with_max_contributor(viewpoint_cam, feature_gaussians, pipe, background, override_color=torch.zeros(feature_gaussians.get_xyz.shape[0],3,dtype=torch.float,device='cuda'))['max_contributor']
         rendered_features = render_pkg["render"]
         visibility_filter = render_pkg["visibility_filter"]
@@ -209,14 +172,12 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         rendered_feature_norm = rendered_features.norm(dim = 0, p=2).mean()
         rendered_feature_norm_reg = (1-rendered_feature_norm)**2 # regularization term, keep aligned on a ray
 
-        rendered_features = F.interpolate(rendered_features.unsqueeze(0), viewpoint_cam.original_masks.shape[-2:], mode='bilinear').squeeze(0)
+        if rendered_features.shape[-2:] != sam_masks.shape[-2:]:
+            rendered_features = F.interpolate(rendered_features.unsqueeze(0), viewpoint_cam.original_masks.shape[-2:], mode='bilinear').squeeze(0)
 
-        sampled_feature_with_scale = rendered_features[:,sampled_ray] # float[sampled scales, C, sampled pixels]
-
-        scale_conditioned_features_sam = sampled_feature_with_scale.permute([1,0]) # float[sampled pixels, C]
-
-        scale_conditioned_features_sam = F.normalize(scale_conditioned_features_sam, dim=-1, p=2)
-        corr = torch.einsum('ac,bc->ab', scale_conditioned_features_sam, scale_conditioned_features_sam) # sampled pixel to sampled pixel similarity, float[sampled pixels, sampled pixels]
+        sampled_features = rendered_features[:,sampled_ray] # float[sampled scales, C, sampled pixels]
+        normed_sampled_features = F.normalize(sampled_features.permute([1,0]), dim=-1, p=2)
+        corr = torch.einsum('ac,bc->ab', normed_sampled_features, normed_sampled_features) # sampled pixel to sampled pixel similarity, float[sampled pixels, sampled pixels]
 
         sampled_mask_positive = gt_corrs == 1 # two sampled pixels belong to different mask in any sampled scales, bool[sampled pixels, sampled pixels]
         sampled_mask_positive &= ~(background_sample_mask[:,None]@background_sample_mask[None,:]).bool()
@@ -269,7 +230,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         loss.backward()
 
         feature_gaussians.optimizer.step()
-        feature_gaussians.optimizer.zero_grad(set_to_none = True)
+        feature_gaussians.optimizer.zero_grad()
 
         iter_end.record()
 
@@ -289,14 +250,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             })
             progress_bar.update(10)
 
-    
-    # scene.save_feature(iteration, target = 'contrastive_feature', smooth_weights = torch.softmax(smooth_weights, dim = -1) if smooth_weights is not None else None, smooth_type = 'traditional', smooth_K = opt.smooth_K)
-    scene.feature_gaussians.save_ply(args.contrastive_feature_point_cloud_path, 
-                                     smooth_weights=torch.softmax(smooth_weights, dim = -1) if smooth_weights is not None else None,
-                                     smooth_type = 'traditional', 
-                                     smooth_K = opt.smooth_K)
-    # torch.save(scale_gate.state_dict(), os.path.join(scene.model_path, "point_cloud/iteration_{}/".format(iteration) + "scale_gate.pt"))
-    # torch.save(scale_gate.state_dict(), args.scale_gate_path)
+    feature_gaussians.save_ply(args.contrastive_feature_point_cloud_path)
 
 def prepare_output_and_logger(args):    
     if not args.model_path:

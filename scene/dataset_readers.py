@@ -151,7 +151,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8, need_features=False, need_masks=False, sample_rate = 1.0, allow_principle_point_shift = False, replica=False, args=None):
+def readColmapSceneInfo(path, images, eval, llffhold=8, sample_rate = 1.0, allow_principle_point_shift = False, args=None):
     try:
         cameras_extrinsic_file = os.path.join(path, "images.bin")
         cameras_intrinsic_file = os.path.join(path, "cameras.bin")
@@ -163,17 +163,9 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, need_features=False, nee
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
-    reading_dir = "images" if images == None else images
-    feature_dir = "clip_features"
-    mask_dir = "sam_masks"
-    mask_scale_dir = "mask_scales"
-
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=args.images_path, features_folder=args.features_path, masks_folder=args.masks_path, sample_rate=sample_rate, allow_principle_point_shift = allow_principle_point_shift)
 
-    if not replica:
-        cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
-    else:
-        cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : int(x.image_name.split("_")[-1]))
+    cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
         train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]

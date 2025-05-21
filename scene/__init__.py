@@ -262,3 +262,44 @@ class Scene:
 
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
+    
+class FeatureScene:
+    feature_gaussians : FeatureGaussianModel
+
+    def __init__(self, args : ModelParams, feature_gaussians: FeatureGaussianModel=None, shuffle=True, resolution_scales=[1.0], sample_rate = 1.0):
+        """b
+        :param path: Path to colmap scene main folder.
+        """
+        self.model_path = args.model_path
+        self.feature_gaussians = feature_gaussians
+            
+        self.train_cameras = {}
+        self.test_cameras = {}
+
+        if os.path.exists(os.path.join(args.sparse_path)):
+        # used for testing lerf transforms,json
+            print(f"Allow Camera Principle Point Shift: {args.allow_principle_point_shift}")
+            scene_info = sceneLoadTypeCallbacks["Colmap"](args.sparse_path, args.images, args.eval, need_features = args.need_features, need_masks = args.need_masks, sample_rate = sample_rate, allow_principle_point_shift = args.allow_principle_point_shift, replica = 'replica' in args.model_path, args=args)
+        elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
+            print("Found transforms_train.json file, assuming Blender data set!")
+            scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
+        else:
+            assert False, "Could not recognize scene type!"
+
+        if shuffle:
+            random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
+            random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
+
+        self.cameras_extent = scene_info.nerf_normalization["radius"]
+
+        for resolution_scale in resolution_scales:
+            print("Loading Training Cameras")
+            self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
+            print("Loading Test Cameras")
+            self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
+
+    def getTrainCameras(self, scale=1.0):
+        return self.train_cameras[scale]
+
+    def getTestCameras(self, scale=1.0):
+        return self.test_cameras[scale]
