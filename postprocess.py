@@ -1,27 +1,22 @@
 import shutil
 import torch
-from scene import Scene
 import os
 import json
 import sys
+import logging
 from datetime import datetime
 from tqdm import tqdm
 from gaussian_renderer import render_with_max_contributor
 from argparse import ArgumentParser
-from arguments import ModelParams, PipelineParams, get_combined_args
+from arguments import ModelParams, PipelineParams
 # from gaussian_renderer import GaussianModel
 import numpy as np
-import cv2
-from sklearn.decomposition import PCA
 import torch.nn.functional as F
 
 # from scene.gaussian_model import GaussianModel
-from scene import Scene, GaussianModel, FeatureGaussianModel
-from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
+from scene import GaussianModel, FeatureGaussianModel
 from scene.dataset_readers import readColmapCameras, read_extrinsics_binary, read_intrinsics_binary, read_extrinsics_text, read_intrinsics_text
 from utils.camera_utils import cameraList_from_camInfos
-from utils.visualization_utils import save_image
-from utils.clip_utils import get_relevancy
 
 from scipy.spatial import KDTree
 from hdbscan import HDBSCAN
@@ -52,8 +47,6 @@ args = parser.parse_args(sys.argv[1:])
 bg_color = torch.tensor([1,1,1] if args.white_background else [0, 0, 0], dtype=torch.float32, device="cuda")
 torch.manual_seed(42)
 
-gs_model = GaussianModel(args.sh_degree)
-gs_model.load_ply(args.point_cloud_path)
 feat_gs_model = FeatureGaussianModel(args.feature_dim)
 feat_gs_model.load_ply(args.contrastive_feature_point_cloud_path)
 try:
@@ -72,10 +65,9 @@ point_scales = feat_gs_model.get_scaling.detach().cpu()
 is_big_gaussian = point_scales.max(dim=-1).values>point_scales.max(dim=-1).values.median()*args.scale_threshold
 point_opacities = feat_gs_model.get_opacity.detach().cpu().squeeze()
 is_transparent_gaussian = point_opacities<args.opcity_threshold
-print(f'{point_features.shape=}, {point_xyz.shape=}')
+logging.info(f'{point_features.shape=}, {point_xyz.shape=}')
 
 sampled_mask = uniform_sample(point_xyz.shape[0], args.sample_num)
-# sampled_mask = torch.rand(point_features.shape[0]) > 0.99
 
 normed_point_features = F.normalize(point_features, dim = -1, p = 2)
 sampled_normed_point_features = normed_point_features[sampled_mask]
@@ -96,10 +88,7 @@ hybird_distance = args.feature_ratio*sampled_normed_point_features_distance + (1
 
 clusterer = HDBSCAN(min_cluster_size=10, cluster_selection_epsilon=0.01, allow_single_cluster = False, metric='precomputed') # HDBSCAN
 
-start_time = datetime.now()
 cluster_labels = clusterer.fit_predict(hybird_distance.numpy().astype(np.float64))
-end_time = datetime.now()
-elapsed_time = end_time - start_time
 
 feature_cluster_centers = torch.zeros(len(np.unique(cluster_labels)) - 1, point_features.shape[-1])
 xyz_cluster_centers = torch.zeros(len(np.unique(cluster_labels)) - 1, point_xyz.shape[-1])
@@ -115,12 +104,11 @@ hybird_sim = args.feature_ratio*normed_point_features_sim + (1-args.feature_rati
 confidence = torch.softmax(hybird_sim*10, dim=-1)
 mask, point_labels = confidence.max(dim=-1)
 mask = mask>args.instance_threshold
-print(f'{mask.sum()=}, {(~mask).sum()=}')
+logging.debug(f'{mask.sum()=}, {(~mask).sum()=}')
 point_labels[~mask] = -1
-print(f'{elapsed_time=}, {len(torch.unique(point_labels))=}') # 3
-print(f'HDBSCAN finish')
+logging.info(f'HDBSCAN finish')
 def filter3d(pos, label, k):
-    print('begin filter3d')
+    logging.info('begin filter3d')
     assert pos.shape[0] == label.shape[0]
     pos=pos.detach().cpu().numpy()
     label=label.detach().cpu().numpy()
@@ -142,59 +130,12 @@ def filter3d(pos, label, k):
                 counts.append(1)
         # print(f'{bin}\n{counts}')
         new_label.append(bin[counts.index(max(counts))])
-    print('finish filter3d')
+    logging.info('finish filter3d')
     return torch.tensor(new_label)
-start_time = datetime.now()
 if args.k>0:
     point_labels = filter3d(point_xyz, point_labels, args.k)
 end_time = datetime.now()
-elapsed_time = end_time - start_time
-print(f'{elapsed_time=}, {len(torch.unique(point_labels))=}') # 89, pytorch3d.ops.knn_points=49
-print(f'knn finish')
-# new_point_labels = torch.zeros_like(point_labels)
-# label = -1
-# new_point_labels[point_labels==label] = label
-# label += 1
-# for instance in tqdm(torch.unique(point_labels).tolist()[1:]):
-#     mask = (point_labels == instance)
-#     cluster_labels = torch.from_numpy(clusterer.fit_predict(torch.clamp(torch.norm(point_xyz[mask][:,None,:] - point_xyz[mask][None,:,:], dim=-1), 0).numpy().astype(np.float64)))
-#     for pl in torch.unique(cluster_labels).tolist()[1:]:
-#         cluster_labels[cluster_labels==pl] = label
-#         label+=1
-#     new_point_labels[mask] = cluster_labels
-# point_labels = new_point_labels
-
-# new_point_labels = torch.zeros_like(point_labels)
-# label = -1
-# new_point_labels[point_labels==label] = label
-# label += 1
-# for instance in tqdm(torch.unique(point_labels).tolist()[1:]):
-#     instance_mask = (point_labels == instance)
-#     instance_point_xyz = point_xyz[instance_mask]
-#     sampled_mask = uniform_sample(instance_point_xyz, args.sample_num)
-#     sampled_point_xyz = instance_point_xyz[sampled_mask]
-#     sampled_point_xyz_distance = torch.clamp(torch.norm(sampled_point_xyz[:,None,:] - sampled_point_xyz[None,:,:], dim=-1), 0)
-#     cluster_labels = clusterer.fit_predict(sampled_point_xyz_distance.numpy().astype(np.float64))
-#     xyz_cluster_centers = torch.zeros(len(np.unique(cluster_labels)), instance_point_xyz.shape[-1])
-#     for i in np.unique(cluster_labels):
-#         if i<0:
-#             continue
-#         xyz_cluster_centers[i] = sampled_point_xyz[cluster_labels == i].mean(dim = 0)
-#     point_xyz_sim = torch.clamp(torch.exp(-torch.norm(instance_point_xyz[:,None,:] - xyz_cluster_centers[None,:,:], dim=-1)), 0, 1)
-#     confidence = torch.softmax(point_xyz_sim*10, dim=-1)
-#     if confidence.shape[-1] == 0:
-#         instance_point_labels = torch.full((confidence.shape[0],), -1, dtype=torch.long)
-#     else:
-#         mask, instance_point_labels = confidence.max(dim=-1)
-#         mask = mask>0.5
-#         instance_point_labels[~mask] = -1
-#     for i in torch.unique(instance_point_labels):
-#         if i<0:
-#             continue
-#         instance_point_labels[instance_point_labels==i] = label
-#         label+=1
-#     new_point_labels[instance_mask] = instance_point_labels
-# point_labels = new_point_labels
+logging.info(f'knn finish')
 
 vote = {instance: [0 for _ in range(len(args.classes)+1)] for instance in torch.unique(point_labels).tolist()}
 contribute = torch.zeros((point_xyz.shape[0]), dtype=torch.float32, device=point_labels.device, requires_grad=False)
@@ -209,7 +150,7 @@ for i, camera in tqdm(list(enumerate(camera_list))):
     masks[masks!=1] = 0
     masks = masks.bool()
     labels = torch.load(os.path.join(args.labels_path, f'{camera.image_name}.pt'))
-    render_pkg = render_with_max_contributor(camera, gs_model, args, bg_color)
+    render_pkg = render_with_max_contributor(camera, feat_gs_model, args, bg_color)
     max_contributor = render_pkg['max_contributor'].detach().to(point_labels.device)
     max_contribute = render_pkg['max_contribute'].detach().to(point_labels.device)
     contribute += render_pkg['contribute'].detach().to(point_labels.device)

@@ -443,7 +443,7 @@ def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
-    shs = pc.get_features
+    shs = None
     colors_precomp = pc.get_instance_features
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 

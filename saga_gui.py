@@ -1,40 +1,23 @@
 # Borrowed from OmniSeg3D-GS (https://github.com/OceanYing/OmniSeg3D-GS)
 import torch
-from scene import Scene
 import os
-from tqdm import tqdm
-from os import makedirs
 from gaussian_renderer import render, render_contrastive_feature
-from utils.general_utils import safe_state
 from argparse import ArgumentParser
-from arguments import ModelParams, PipelineParams, get_combined_args
 # from gaussian_renderer import GaussianModel
 import numpy as np
-from PIL import Image
-import colorsys
 import cv2
 from sklearn.decomposition import PCA
-import torch.nn.functional as F
 
 # from scene.gaussian_model import GaussianModel
-from scene import Scene, GaussianModel, FeatureGaussianModel
+from scene import GaussianModel, FeatureGaussianModel
 import dearpygui.dearpygui as dpg
 import math
 from scene.cameras import Camera
-from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
-from scene.dataset_readers import readColmapCameras, read_extrinsics_binary, read_intrinsics_binary, read_extrinsics_text, read_intrinsics_text
-from utils.camera_utils import cameraList_from_camInfos
-from utils.visualization_utils import save_image
-from utils.clip_utils import get_relevancy
+from utils.graphics_utils import focal2fov, fov2focal
 
 from scipy.spatial.transform import Rotation as R
-from scipy.spatial import KDTree
 
 # from cuml.cluster.hdbscan import HDBSCAN
-from hdbscan import HDBSCAN
-from segment_anything import (SamAutomaticMaskGenerator, SamPredictor,
-                              sam_model_registry)
-from transformers import CLIPProcessor, CLIPModel
 
 def depth2img(depth):
     depth = (depth-depth.min())/(depth.max()-depth.min() + 1e-7)

@@ -22,7 +22,7 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
-from gaussian_model import GaussianModel
+from scene import GaussianModel
 
 class FeatureGaussianModel(GaussianModel):
 
@@ -75,6 +75,9 @@ class FeatureGaussianModel(GaussianModel):
     @property
     def get_instance_features(self):
         return self.instance_feature_activation(self._instance_feature)
+    
+    def parameters(self):
+        return [*super().parameters(), self._instance_feature]
 
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
@@ -202,10 +205,9 @@ class FeatureGaussianModel(GaussianModel):
         for idx, attr_name in enumerate(rot_names):
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
-        instance_feature_name = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_")]
+        instance_feature_name = [p.name for p in plydata.elements[0].properties if p.name.startswith("instance_feature_")]
         instance_feature_name = sorted(instance_feature_name, key = lambda x: int(x.split('_')[-1]))
-        assert len(instance_feature_name)==self.instance_feature_dim
-        instance_feature = np.random.randn(xyz.shape[0], len(instance_feature_name))
+        instance_feature = np.random.randn(xyz.shape[0], self.instance_feature_dim)
         for idx, attr_name in enumerate(instance_feature_name):
             instance_feature[:, idx] = np.asarray(plydata.elements[0][attr_name])
 

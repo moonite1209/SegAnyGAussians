@@ -100,19 +100,19 @@ def pickCamera(cameras):
 
 def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterations, debug_from):
     print("RFN weight:", opt.rfn)
-    print("Smooth K:", opt.smooth_K)
-    print("Scale aware dim:", opt.scale_aware_dim)
     assert opt.ray_sample_rate > 0 or opt.num_sampled_rays > 0
 
-    dataset.need_features = False
-    dataset.need_masks = True
-    dataset.allow_principle_point_shift = False
+    # dataset.need_features = False
+    # dataset.need_masks = True
+    # dataset.allow_principle_point_shift = False
 
-    feature_gaussians = FeatureGaussianModel(dataset.feature_dim)
-    feature_gaussians.load_ply(opt.model_path)
+    feature_gaussians = FeatureGaussianModel(dataset.sh_degree, dataset.feature_dim)
+    feature_gaussians.load_ply(dataset.point_cloud_path)
+    feature_gaussians.training_setup(opt)
+    feature_gaussians.eval()
+    feature_gaussians._instance_feature.requires_grad = True
 
-    sample_rate = 1.0
-    scene = FeatureScene(dataset, feature_gaussians, shuffle=False, sample_rate=sample_rate)
+    scene = FeatureScene(dataset, feature_gaussians, shuffle=False, sample_rate=1.0)
 
     background = torch.ones([3], dtype=torch.float32, device="cuda") if dataset.white_background else torch.zeros([3], dtype=torch.float32, device="cuda")
     background_feature = torch.zeros([dataset.feature_dim], dtype=torch.float32, device="cuda")
@@ -121,7 +121,6 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
     iter_end = torch.cuda.Event(enable_timing = True)
     
     first_iter = 0
-    viewpoint_stack = None
     if not opt.iterations:
         opt.iterations = min(len(scene.getTrainCameras())*10, 10000)
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
@@ -131,7 +130,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         with open(args.progress_path, 'w') as f:
             f.write(str((iteration)*100//opt.iterations))
         iter_start.record()
-        if not viewpoint_cam.original_masks:
+        if viewpoint_cam.original_masks is None or viewpoint_cam.original_masks.shape[0] == 0:
             continue
         with torch.no_grad():
             # N_mask, H, W
@@ -197,7 +196,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         std_point_xyz = (feature_gaussians.get_xyz - min_val) / (max_val - min_val) * (new_max - new_min) + new_min
         sample_mask = uniform_sample(feature_gaussians.get_xyz.shape[0], opt.distance_sample_num)
         sample_xyz = std_point_xyz[sample_mask]
-        sample_features = feature_gaussians.get_point_features[sample_mask]
+        sample_features = feature_gaussians.get_instance_features[sample_mask]
         sample_scaled_features = F.normalize(sample_features, dim=-1)
         ptp_xyz_distance = torch.norm(sample_xyz[:,None,:] - sample_xyz[None,:,:], dim=-1) # float[fps,fps]
         ptp_feature_sim = torch.einsum('ac, bc -> ab', sample_scaled_features, sample_scaled_features) # float[fps,fps]
@@ -212,8 +211,8 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
                 max_contributors = torch.unique(max_contributor[sam_mask])
                 uniform_sample_mask = uniform_sample(max_contributors.shape[0], 2)
                 sampled_max_contributors = max_contributors[uniform_sample_mask]
-                sampled_max_contributor_features = F.normalize(feature_gaussians.get_point_features[sampled_max_contributors], dim=-1)
-                invisable_feature = F.normalize(feature_gaussians.get_point_features[~visibility_filter],dim=-1)
+                sampled_max_contributor_features = F.normalize(feature_gaussians.get_instance_features[sampled_max_contributors], dim=-1)
+                invisable_feature = F.normalize(feature_gaussians.get_instance_features[~visibility_filter],dim=-1)
                 outview_loss += torch.relu(torch.einsum('ac,bc->ab', sampled_max_contributor_features, invisable_feature)).mean()
 
 
@@ -240,6 +239,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
                 "neg loss": f"{negative_loss.item():.{3}f}",
                 "rfn loss": f"{rendered_feature_norm_reg.item():.{3}f}",
                 "dis loss": f"{distance_loss.item():.{3}f}",
+                "outview loss": f"{outview_loss.item():.{3}f}",
                 "loss": f"{loss.item():.{3}f}",
                 "pos sim": f"{pos_sim.item():.{3}f}",
                 "neg sim": f"{neg_sim.item():.{3}f}",
