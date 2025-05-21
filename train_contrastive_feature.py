@@ -133,7 +133,11 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
     scene = Scene(dataset, gaussians, feature_gaussians, load_iteration=iteration, shuffle=False, target='contrastive_feature', mode='train', sample_rate=sample_rate)
 
     feature_gaussians.change_to_segmentation_mode(opt, "contrastive_feature", fixed_feature=False)
-
+    feature_gaussians._xyz.requires_grad = False
+    feature_gaussians._scaling.requires_grad = False
+    feature_gaussians._rotation.requires_grad = False
+    feature_gaussians._opacity.requires_grad = False
+    feature_gaussians._point_features.requires_grad = True
     smooth_weights = None
 
     del gaussians
