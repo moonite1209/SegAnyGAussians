@@ -12,7 +12,7 @@
 import os
 import torch
 from random import randint
-from gaussian_renderer import render_contrastive_feature
+from gaussian_renderer import render_contrastive_feature, render_with_max_contributor
 import sys
 from scene import Scene, GaussianModel, FeatureGaussianModel
 from utils.general_utils import safe_state
@@ -43,9 +43,7 @@ from sklearn.preprocessing import QuantileTransformer
 
 import torch
 
-def uniform_sample(xyz, n_samples):
-    device = xyz.device
-    N, _ = xyz.shape
+def uniform_sample(N, n_samples, device = 'cuda:0'):
     # 生成均匀随机采样的索引
     selected_indices = torch.randperm(N,device=device)[:n_samples]
     # 创建全False的布尔张量
@@ -204,6 +202,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             gt_corrs[gt_corrs != 0] = 1 # float[sampled pixels, sampled pixels], a pixel in the same mask with another pixel
 
         render_pkg = render_contrastive_feature(viewpoint_cam, feature_gaussians, pipe, background, norm_point_features=True, smooth_type = 'traditional', smooth_weights=torch.softmax(smooth_weights, dim = -1) if smooth_weights is not None else None, smooth_K = opt.smooth_K)
+        max_contributor = render_with_max_contributor(viewpoint_cam, feature_gaussians, pipe, background, override_color=torch.zeros(feature_gaussians.get_xyz.shape[0],3,dtype=torch.float,device='cuda'))['max_contributor']
         rendered_features = render_pkg["render"]
         visibility_filter = render_pkg["visibility_filter"]
 
@@ -235,7 +234,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         new_min = 0.0
         new_max = 1.0
         std_point_xyz = (feature_gaussians.get_xyz - min_val) / (max_val - min_val) * (new_max - new_min) + new_min
-        sample_mask = uniform_sample(feature_gaussians.get_xyz, opt.distance_sample_num)
+        sample_mask = uniform_sample(feature_gaussians.get_xyz.shape[0], opt.distance_sample_num)
         sample_xyz = std_point_xyz[sample_mask]
         sample_features = feature_gaussians.get_point_features[sample_mask]
         sample_scaled_features = F.normalize(sample_features, dim=-1)
@@ -243,22 +242,25 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         ptp_feature_sim = torch.einsum('ac, bc -> ab', sample_scaled_features, sample_scaled_features) # float[fps,fps]
         distance_loss = (ptp_xyz_distance*torch.clamp(ptp_feature_sim,0)).mean()
 
-        # distance_loss = torch.tensor(0.,device='cuda')
-        # if iteration > opt.iterations//2:
-        #     for sam_mask in sam_masks:
-        #         sam_mask = sam_mask.bool()
-        #         if on_boundary(sam_mask):
-        #             continue
-        #         mask_feature = F.normalize(F.normalize(rendered_features[:,sam_mask].permute((1,0)),dim=-1).mean(dim=0,keepdim=True),dim=-1)
-        #         invisable_feature = F.normalize(feature_gaussians.get_point_features[~visibility_filter],dim=-1)
-        #         distance_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature)).mean()
+        outview_loss = torch.tensor(0.,device='cuda')
+        if iteration > opt.iterations//2:
+            for sam_mask in sam_masks:
+                sam_mask = sam_mask.bool()
+                if on_boundary(sam_mask):
+                    continue
+                max_contributors = torch.unique(max_contributor[sam_mask])
+                uniform_sample_mask = uniform_sample(max_contributors.shape[0], 2)
+                sampled_max_contributors = max_contributors[uniform_sample_mask]
+                sampled_max_contributor_features = F.normalize(feature_gaussians.get_point_features[sampled_max_contributors], dim=-1)
+                invisable_feature = F.normalize(feature_gaussians.get_point_features[~visibility_filter],dim=-1)
+                outview_loss += torch.relu(torch.einsum('ac,bc->ab', sampled_max_contributor_features, invisable_feature)).mean()
 
 
         if opt.positive_weight == -1:
             opt.positive_weight = 2*(sampled_mask_negative.sum()/example_num)
         if opt.negative_weight == -1:
             opt.negative_weight = 2*(sampled_mask_positive.sum()/example_num)
-        loss = opt.positive_weight*positive_loss + opt.negative_weight*negative_loss + opt.rfn * rendered_feature_norm_reg + opt.distance_weight * distance_loss
+        loss = opt.positive_weight*positive_loss + opt.negative_weight*negative_loss + opt.rfn * rendered_feature_norm_reg + opt.distance_weight * distance_loss + outview_loss
 
         with torch.no_grad():
             pos_sim = corr[gt_corrs == 1].mean()

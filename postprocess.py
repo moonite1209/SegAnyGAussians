@@ -26,9 +26,7 @@ from utils.clip_utils import get_relevancy
 from scipy.spatial import KDTree
 from hdbscan import HDBSCAN
 
-def uniform_sample(xyz, n_samples):
-    device = xyz.device
-    N, _ = xyz.shape
+def uniform_sample(N, n_samples, device = 'cuda:0'):
     # 生成均匀随机采样的索引
     selected_indices = torch.randperm(N,device=device)[:n_samples]
     # 创建全False的布尔张量
@@ -76,7 +74,7 @@ point_opacities = feat_gs_model.get_opacity.detach().cpu().squeeze()
 is_transparent_gaussian = point_opacities<args.opcity_threshold
 print(f'{point_features.shape=}, {point_xyz.shape=}')
 
-sampled_mask = uniform_sample(point_xyz, args.sample_num)
+sampled_mask = uniform_sample(point_xyz.shape[0], args.sample_num)
 # sampled_mask = torch.rand(point_features.shape[0]) > 0.99
 
 normed_point_features = F.normalize(point_features, dim = -1, p = 2)
