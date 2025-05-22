@@ -547,7 +547,7 @@ class GaussianSplattingGUI:
     
 
     def do_pca(self):
-        sems = self.engine['feature'].get_point_features.clone().squeeze()
+        sems = self.engine['feature'].get_instance_features.clone().squeeze()
         N, C = sems.shape
         torch.manual_seed(0)
         randint = torch.randint(0, N, [200_000])
@@ -662,7 +662,7 @@ class GaussianSplattingGUI:
                 self.engine._objects_dc     # (N, 1, 16)
                 """
                 self.segment3d_flag = False
-                feat_pts = self.engine['feature'].get_point_features.squeeze()
+                feat_pts = self.engine['feature'].get_instance_features.squeeze()
                 score_pts = feat_pts @ self.chosen_feature
                 score_pts = (score_pts + 1.0) / 2
                 self.score_pts_binary = (score_pts > dpg.get_value('_ScoreThres')).sum(1) > 0
@@ -737,7 +737,7 @@ if __name__ == "__main__":
     opt.json_path = args.json_path
 
     gs_model = GaussianModel(opt.sh_degree)
-    feat_gs_model = FeatureGaussianModel(opt.feature_dim)
+    feat_gs_model = FeatureGaussianModel(opt.sh_degree, opt.feature_dim)
     gui = GaussianSplattingGUI(opt, gs_model, feat_gs_model)
 
     gui.render()

@@ -189,6 +189,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         positive_loss = (- per_pixel_weight[sampled_mask_positive] * gt_corrs[sampled_mask_positive] * corr[sampled_mask_positive]).mean()
         negative_loss = (per_pixel_weight[sampled_mask_negative] * (1 - gt_corrs[sampled_mask_negative]) * torch.relu(corr[sampled_mask_negative])).mean()
 
+        distance_loss = torch.tensor(0.,device='cuda')
         min_val = torch.min(feature_gaussians.get_xyz, dim=0).values
         max_val = torch.max(feature_gaussians.get_xyz, dim=0).values
         new_min = 0.0
@@ -203,17 +204,17 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         distance_loss = (ptp_xyz_distance*torch.clamp(ptp_feature_sim,0)).mean()
 
         outview_loss = torch.tensor(0.,device='cuda')
-        if iteration > opt.iterations//2:
-            for sam_mask in sam_masks:
-                sam_mask = sam_mask.bool()
-                if on_boundary(sam_mask):
-                    continue
-                max_contributors = torch.unique(max_contributor[sam_mask])
-                uniform_sample_mask = uniform_sample(max_contributors.shape[0], 2)
-                sampled_max_contributors = max_contributors[uniform_sample_mask]
-                sampled_max_contributor_features = F.normalize(feature_gaussians.get_instance_features[sampled_max_contributors], dim=-1)
-                invisable_feature = F.normalize(feature_gaussians.get_instance_features[~visibility_filter],dim=-1)
-                outview_loss += torch.relu(torch.einsum('ac,bc->ab', sampled_max_contributor_features, invisable_feature)).mean()
+        # if iteration > opt.iterations//2:
+        #     for sam_mask in sam_masks:
+        #         sam_mask = sam_mask.bool()
+        #         if on_boundary(sam_mask):
+        #             continue
+        #         max_contributors = torch.unique(max_contributor[sam_mask])
+        #         uniform_sample_mask = uniform_sample(max_contributors.shape[0], 2)
+        #         sampled_max_contributors = max_contributors[uniform_sample_mask]
+        #         sampled_max_contributor_features = F.normalize(feature_gaussians.get_instance_features[sampled_max_contributors], dim=-1)
+        #         invisable_feature = F.normalize(feature_gaussians.get_instance_features[~visibility_filter],dim=-1)
+        #         outview_loss += torch.relu(torch.einsum('ac,bc->ab', sampled_max_contributor_features, invisable_feature)).mean()
 
 
         if opt.positive_weight == -1:

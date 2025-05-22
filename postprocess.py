@@ -30,6 +30,8 @@ def uniform_sample(N, n_samples, device = 'cuda:0'):
     mask[selected_indices] = True
     return mask
 
+logging.basicConfig(level=logging.DEBUG, 
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 parser = ArgumentParser(description="Training script parameters")
 lp = ModelParams(parser)
 pp = PipelineParams(parser)
@@ -47,7 +49,7 @@ args = parser.parse_args(sys.argv[1:])
 bg_color = torch.tensor([1,1,1] if args.white_background else [0, 0, 0], dtype=torch.float32, device="cuda")
 torch.manual_seed(42)
 
-feat_gs_model = FeatureGaussianModel(args.feature_dim)
+feat_gs_model = FeatureGaussianModel(args.sh_degree, args.feature_dim)
 feat_gs_model.load_ply(args.contrastive_feature_point_cloud_path)
 try:
     cameras = readColmapCameras(read_extrinsics_binary(os.path.join(args.sparse_path, 'images.bin')), 
@@ -59,7 +61,7 @@ except:
                                 args.images_path)
 camera_list = cameraList_from_camInfos(cameras, 1, args)
 
-point_features = feat_gs_model.get_point_features.detach().cpu()
+point_features = feat_gs_model.get_instance_features.detach().cpu()
 point_xyz = feat_gs_model.get_xyz.detach().cpu()
 point_scales = feat_gs_model.get_scaling.detach().cpu()
 is_big_gaussian = point_scales.max(dim=-1).values>point_scales.max(dim=-1).values.median()*args.scale_threshold
@@ -67,7 +69,7 @@ point_opacities = feat_gs_model.get_opacity.detach().cpu().squeeze()
 is_transparent_gaussian = point_opacities<args.opcity_threshold
 logging.info(f'{point_features.shape=}, {point_xyz.shape=}')
 
-sampled_mask = uniform_sample(point_xyz.shape[0], args.sample_num)
+sampled_mask = uniform_sample(point_xyz.shape[0], args.sample_num, device='cpu')
 
 normed_point_features = F.normalize(point_features, dim = -1, p = 2)
 sampled_normed_point_features = normed_point_features[sampled_mask]
