@@ -234,6 +234,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         positive_loss = (- per_pixel_weight[sampled_mask_positive] * gt_corrs[sampled_mask_positive] * corr[sampled_mask_positive]).mean()
         negative_loss = (per_pixel_weight[sampled_mask_negative] * (1 - gt_corrs[sampled_mask_negative]) * torch.relu(corr[sampled_mask_negative])).mean()
 
+        distance_loss = torch.tensor(0.,device='cuda')
         min_val = torch.min(feature_gaussians.get_xyz, dim=0).values
         max_val = torch.max(feature_gaussians.get_xyz, dim=0).values
         new_min = 0.0
@@ -247,7 +248,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         ptp_feature_sim = torch.einsum('ac, bc -> ab', sample_scaled_features, sample_scaled_features) # float[fps,fps]
         distance_loss = (ptp_xyz_distance*torch.clamp(ptp_feature_sim,0)).mean()
 
-        # distance_loss = torch.tensor(0.,device='cuda')
+        outview_loss = torch.tensor(0.,device='cuda')
         # if iteration > opt.iterations//2:
         #     for sam_mask in sam_masks:
         #         sam_mask = sam_mask.bool()
@@ -255,14 +256,13 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         #             continue
         #         mask_feature = F.normalize(F.normalize(rendered_features[:,sam_mask].permute((1,0)),dim=-1).mean(dim=0,keepdim=True),dim=-1)
         #         invisable_feature = F.normalize(feature_gaussians.get_point_features[~visibility_filter],dim=-1)
-        #         distance_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature)).mean()
-
+        #         outview_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature)).mean()
 
         if opt.positive_weight == -1:
             opt.positive_weight = 2*(sampled_mask_negative.sum()/example_num)
         if opt.negative_weight == -1:
             opt.negative_weight = 2*(sampled_mask_positive.sum()/example_num)
-        loss = opt.positive_weight*positive_loss + opt.negative_weight*negative_loss + opt.rfn * rendered_feature_norm_reg + opt.distance_weight * distance_loss
+        loss = opt.positive_weight*positive_loss + opt.negative_weight*negative_loss + opt.rfn * rendered_feature_norm_reg + opt.distance_weight * distance_loss + outview_loss
 
         with torch.no_grad():
             pos_sim = corr[gt_corrs == 1].mean()
@@ -281,6 +281,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
                 "neg loss": f"{negative_loss.item():.{3}f}",
                 "rfn loss": f"{rendered_feature_norm_reg.item():.{3}f}",
                 "dis loss": f"{distance_loss.item():.{3}f}",
+                "outview loss": f"{outview_loss.item():.{3}f}",
                 "loss": f"{loss.item():.{3}f}",
                 "pos sim": f"{pos_sim.item():.{3}f}",
                 "neg sim": f"{neg_sim.item():.{3}f}",
