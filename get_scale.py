@@ -81,8 +81,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     dataset = model.extract(args)
-    dataset.need_features = False
-    dataset.need_masks = True
 
     # ALLOW_PRINCIPLE_POINT_SHIFT = 'lerf' in args.model_path
     dataset.allow_principle_point_shift = ALLOW_PRINCIPLE_POINT_SHIFT

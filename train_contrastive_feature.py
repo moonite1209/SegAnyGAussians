@@ -102,9 +102,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
     print("RFN weight:", opt.rfn)
     assert opt.ray_sample_rate > 0 or opt.num_sampled_rays > 0
 
-    # dataset.need_features = False
-    # dataset.need_masks = True
-    # dataset.allow_principle_point_shift = False
+    tb_writer = prepare_logger(dataset)
 
     feature_gaussians = FeatureGaussianModel(dataset.sh_degree, dataset.feature_dim)
     feature_gaussians.load_ply(dataset.point_cloud_path)
@@ -169,7 +167,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         visibility_filter = render_pkg["visibility_filter"]
 
         rendered_feature_norm = rendered_features.norm(dim = 0, p=2).mean()
-        rendered_feature_norm_reg = (1-rendered_feature_norm)**2 # regularization term, keep aligned on a ray
+        norm_loss = (1-rendered_feature_norm)**2 # regularization term, keep aligned on a ray
 
         if rendered_features.shape[-2:] != sam_masks.shape[-2:]:
             rendered_features = F.interpolate(rendered_features.unsqueeze(0), viewpoint_cam.original_masks.shape[-2:], mode='bilinear').squeeze(0)
@@ -221,7 +219,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             opt.positive_weight = 2*(sampled_mask_negative.sum()/example_num)
         if opt.negative_weight == -1:
             opt.negative_weight = 2*(sampled_mask_positive.sum()/example_num)
-        loss = opt.positive_weight*positive_loss + opt.negative_weight*negative_loss + opt.rfn * rendered_feature_norm_reg + opt.distance_weight * distance_loss + outview_loss
+        loss = opt.positive_weight*positive_loss + opt.negative_weight*negative_loss + opt.rfn * norm_loss + opt.distance_weight * distance_loss + outview_loss
 
         with torch.no_grad():
             pos_sim = corr[gt_corrs == 1].mean()
@@ -238,7 +236,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             progress_bar.set_postfix({
                 "pos loss": f"{positive_loss.item():.{3}f}",
                 "neg loss": f"{negative_loss.item():.{3}f}",
-                "rfn loss": f"{rendered_feature_norm_reg.item():.{3}f}",
+                "rfn loss": f"{norm_loss.item():.{3}f}",
                 "dis loss": f"{distance_loss.item():.{3}f}",
                 "outview loss": f"{outview_loss.item():.{3}f}",
                 "loss": f"{loss.item():.{3}f}",
@@ -251,27 +249,59 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             })
             progress_bar.update(10)
 
+        training_report(tb_writer, iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_time, image, get_render_image, mask_map, get_feature_map)
+
     feature_gaussians.save_ply(args.contrastive_feature_point_cloud_path)
 
-def prepare_output_and_logger(args):    
-    if not args.model_path:
-        if os.getenv('OAR_JOB_ID'):
-            unique_str=os.getenv('OAR_JOB_ID')
-        else:
-            unique_str = str(uuid.uuid4())
-        args.model_path = os.path.join("./output/", unique_str[0:10])
-        
-    # Set up output folder
-    print("Output folder: {}".format(args.model_path))
-    os.makedirs(args.model_path, exist_ok = True)
-
+def prepare_logger(args):    
     # Create Tensorboard writer
     tb_writer = None
     if TENSORBOARD_FOUND:
-        tb_writer = SummaryWriter(args.model_path)
+        tb_writer = SummaryWriter(args.log_path)
     else:
         print("Tensorboard not available: not logging progress")
     return tb_writer
+
+def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_time, image, get_render_image, mask_map, get_feature_map)
+    if tb_writer:
+        tb_writer.add_scalar('train_loss/loss', loss.item(), iteration)
+        tb_writer.add_scalar('train_loss/positive_loss', positive_loss.item(), iteration)
+        tb_writer.add_scalar('train_loss/negative_loss', negative_loss.item(), iteration)
+        tb_writer.add_scalar('train_loss/norm_loss', norm_loss.item(), iteration)
+        tb_writer.add_scalar('train_loss/distance_loss', distance_loss.item(), iteration)
+        tb_writer.add_scalar('train_loss/outview_loss', outview_loss.item(), iteration)
+        tb_writer.add_scalar('iter_time', iter_time, iteration)
+
+    # Report test and samples of training set
+    if iteration in testing_iterations:
+        torch.cuda.empty_cache()
+        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
+                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+
+        for config in validation_configs:
+            if config['cameras'] and len(config['cameras']) > 0:
+                l1_test = 0.0
+                psnr_test = 0.0
+                for idx, viewpoint in enumerate(config['cameras']):
+                    image = torch.clamp(get_render_image(), 0.0, 1.0)
+                    gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+                    if tb_writer and (idx < 5):
+                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+                        if iteration == testing_iterations[0]:
+                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                    l1_test += l1_loss(image, gt_image).mean().double()
+                    psnr_test += psnr(image, gt_image).mean().double()
+                psnr_test /= len(config['cameras'])
+                l1_test /= len(config['cameras'])          
+                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                if tb_writer:
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+
+        if tb_writer:
+            tb_writer.add_histogram("scene/opacity_histogram", scene.feature_gaussians.get_opacity, iteration)
+            tb_writer.add_scalar('total_points', scene.feature_gaussians.get_xyz.shape[0], iteration)
+        torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     # Set up command line argument parser

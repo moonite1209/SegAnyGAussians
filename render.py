@@ -67,7 +67,6 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, segment : bool = False, target = 'scene', idx = 0, precomputed_mask = None):
-    dataset.need_features = dataset.need_masks = False
     if segment:
         assert target == 'seg' or target == 'coarse_seg_everything' or precomputed_mask is not None and "Segmentation only works with target seg!"
     gaussians, feature_gaussians = None, None

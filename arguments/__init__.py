@@ -58,8 +58,6 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
 
-        self.need_features = False
-        self.need_masks = False
         self.allow_principle_point_shift = False
 
         self.images_path = ''
@@ -70,6 +68,7 @@ class ModelParams(ParamGroup):
         self.sparse_path = ''
         self.json_path = ''
         self.features_path = ''
+        self.log_path = ''
 
         super().__init__(parser, "Loading Parameters", sentinel)
 
