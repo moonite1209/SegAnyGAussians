@@ -23,7 +23,6 @@ parser.add_argument("--scale", type=float, default=1.0)
 parser.add_argument("--render_path", type=str, required=True)
 args = parser.parse_args(sys.argv[1:])
 bg_color = torch.tensor([1,1,1] if args.white_background else [0, 0, 0], dtype=torch.float32, device="cuda")
-torch.manual_seed(42)
 
 gs_model = GaussianModel(args.sh_degree)
 gs_model.load_ply(args.point_cloud_path)

@@ -549,7 +549,6 @@ class GaussianSplattingGUI:
     def do_pca(self):
         sems = self.engine['feature'].get_instance_features.clone().squeeze()
         N, C = sems.shape
-        torch.manual_seed(0)
         randint = torch.randint(0, N, [200_000])
         sems /= (torch.norm(sems, dim=1, keepdim=True) + 1e-6)
         sem_chosen = sems[randint, :]

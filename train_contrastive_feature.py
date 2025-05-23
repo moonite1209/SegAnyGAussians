@@ -12,11 +12,13 @@
 import os
 import torch
 from random import randint
-from gaussian_renderer import render_contrastive_feature, render_with_max_contributor
+from gaussian_renderer import render, render_contrastive_feature, render_with_max_contributor
 import sys
 from scene import FeatureScene, FeatureGaussianModel
 from utils.general_utils import safe_state
-from utils.mask_utils import on_boundary
+from utils.image_utils import psnr
+from utils.loss_utils import l1_loss
+from utils.mask_utils import get_mask_map, on_boundary
 import uuid
 from tqdm import tqdm
 from argparse import ArgumentParser, Namespace
@@ -32,6 +34,8 @@ import pytorch3d.ops
 
 
 import time
+
+from utils.visualization_utils import feature_map_to_image, feature_to_color
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -98,7 +102,7 @@ def pickCamera(cameras):
         camera = view_stack.pop(randint(0, len(view_stack)-1))
         yield camera
 
-def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterations, debug_from):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, debug_from):
     print("RFN weight:", opt.rfn)
     assert opt.ray_sample_rate > 0 or opt.num_sampled_rays > 0
 
@@ -119,15 +123,18 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
     iter_end = torch.cuda.Event(enable_timing = True)
     
     first_iter = 0
+    iterations = opt.iterations
     if not opt.iterations:
-        opt.iterations = min(len(scene.getTrainCameras())*10, 10000)
-    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
+        iterations = min(len(scene.getTrainCameras())*10, 10000)
+    progress_bar = tqdm(range(first_iter, iterations), desc="Training progress")
     first_iter += 1
 
-    for iteration, viewpoint_cam in zip(range(first_iter, opt.iterations + 1), pickCamera(scene.getTrainCameras())):
+    for iteration, viewpoint_cam in zip(range(first_iter, iterations + 1), pickCamera(scene.getTrainCameras())):
         with open(args.progress_path, 'w') as f:
-            f.write(str((iteration)*100//opt.iterations))
+            f.write(str((iteration)*100//iterations))
+        torch.cuda.synchronize()
         iter_start.record()
+
         if viewpoint_cam.original_masks is None or viewpoint_cam.original_masks.shape[0] == 0:
             continue
         with torch.no_grad():
@@ -169,12 +176,8 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         rendered_feature_norm = rendered_features.norm(dim = 0, p=2).mean()
         norm_loss = (1-rendered_feature_norm)**2 # regularization term, keep aligned on a ray
 
-        if rendered_features.shape[-2:] != sam_masks.shape[-2:]:
-            rendered_features = F.interpolate(rendered_features.unsqueeze(0), viewpoint_cam.original_masks.shape[-2:], mode='bilinear').squeeze(0)
-
-        sampled_features = rendered_features[:,sampled_ray] # float[sampled scales, C, sampled pixels]
-        normed_sampled_features = F.normalize(sampled_features.permute([1,0]), dim=-1, p=2)
-        corr = torch.einsum('ac,bc->ab', normed_sampled_features, normed_sampled_features) # sampled pixel to sampled pixel similarity, float[sampled pixels, sampled pixels]
+        sampled_features = rendered_features[:,sampled_ray].permute((1,0)) # float[sampled scales, C, sampled pixels]
+        corr = torch.einsum('ac,bc->ab', sampled_features, sampled_features) # sampled pixel to sampled pixel similarity, float[sampled pixels, sampled pixels]
 
         sampled_mask_positive = gt_corrs == 1 # two sampled pixels belong to different mask in any sampled scales, bool[sampled pixels, sampled pixels]
         sampled_mask_positive &= ~(background_sample_mask[:,None]@background_sample_mask[None,:]).bool()
@@ -227,10 +230,12 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
 
         loss.backward()
 
+        iter_end.record()
+        iter_end.synchronize()
+
         feature_gaussians.optimizer.step()
         feature_gaussians.optimizer.zero_grad()
 
-        iter_end.record()
 
         if iteration % 10 == 0:
             progress_bar.set_postfix({
@@ -249,7 +254,10 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             })
             progress_bar.update(10)
 
-        training_report(tb_writer, iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_time, image, get_render_image, mask_map, get_feature_map)
+        training_report(tb_writer, testing_iterations, scene, 
+                        iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_start.elapsed_time(iter_end), 
+                        get_render_image = lambda viewpoint: render(viewpoint, feature_gaussians, pipe, background)['render'].detach(), 
+                        get_feature_map = lambda viewpoint: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature)['render'].detach())
 
     feature_gaussians.save_ply(args.contrastive_feature_point_cloud_path)
 
@@ -262,7 +270,7 @@ def prepare_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_time, image, get_render_image, mask_map, get_feature_map)
+def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_time, get_render_image, get_feature_map):
     if tb_writer:
         tb_writer.add_scalar('train_loss/loss', loss.item(), iteration)
         tb_writer.add_scalar('train_loss/positive_loss', positive_loss.item(), iteration)
@@ -283,24 +291,29 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    image = torch.clamp(get_render_image(), 0.0, 1.0)
+                    image = get_render_image(viewpoint)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+                    mask_map = get_mask_map(viewpoint.original_masks).permute(2,0,1)
+                    feature_map = get_feature_map(viewpoint)
                     if tb_writer and (idx < 5):
-                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+                        tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/image/render", image[None], global_step=iteration)
+                        tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/feature/render", feature_map_to_image(feature_map, 'CHW')[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
-                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                            tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/image/ground_truth", gt_image[None], global_step=iteration)
+                            tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/feature/ground_truth", mask_map, global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras'])          
+                l1_test /= len(config['cameras'])
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 if tb_writer:
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+                    tb_writer.add_scalar(f'{config['name']}/loss_viewpoint - l1_loss', l1_test, iteration)
+                    tb_writer.add_scalar(f'{config['name']}/loss_viewpoint - psnr', psnr_test, iteration)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.feature_gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', scene.feature_gaussians.get_xyz.shape[0], iteration)
+            tb_writer.add_mesh(f'grad', scene.feature_gaussians.get_xyz, colors=feature_to_color(scene.feature_gaussians.get_instance_features.grad), global_step=iteration)
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
@@ -314,25 +327,21 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=np.random.randint(10000, 20000))
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1, 1000,2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
-    parser.add_argument('--target', default='contrastive_feature', const='contrastive_feature', nargs='?', choices=['scene', 'seg', 'feature', 'coarse_seg_everything', 'contrastive_feature'])
-    parser.add_argument("--iteration", default=-1, type=int)
     
-    # args = get_combined_args(parser, target_cfg_file = 'cfg_args')
     args = parser.parse_args(sys.argv[1:])
-    args.save_iterations.append(args.iterations)
     
-    print("Optimizing " + args.model_path)
+    print("Optimizing " + args.images_path)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.iteration, args.save_iterations, args.checkpoint_iterations, args.debug_from)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.debug_from)
 
     # All done
     print("\nTraining complete.")

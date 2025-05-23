@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 def on_boundary(mask: torch.Tensor, margin: int = 1) -> bool:
     """
@@ -24,3 +25,28 @@ def on_boundary(mask: torch.Tensor, margin: int = 1) -> bool:
     right = mask[:, -margin:].any()
 
     return top or bottom or left or right
+
+def get_mask_map(masks:torch.Tensor):
+    # 确保输入符合预期的尺寸
+    assert len(masks.shape) == 3, "Masks should be of shape [N, H, W]"
+    
+    # 确保mask是bool类型
+    if masks.dtype != torch.bool:
+        masks = masks > 0.5
+
+    device = masks.device
+    N, H, W = masks.shape
+    
+    # 创建随机颜色映射表（确保每种mask有不同颜色）
+    colormap = torch.tensor(np.random.randint(0, 256, size=(N, 3)), dtype=torch.uint8, device=device)
+
+    # 初始化空白RGB图像
+    rgb_image = torch.zeros((H, W, 3), dtype=torch.float32, device=device)
+
+    for i in range(N):
+        mask = masks[i]
+        color = colormap[i].float() / 255.0  # 归一化到 [0, 1]
+        # 将mask对应的颜色赋值给rgb_image
+        rgb_image[mask] = color
+
+    return rgb_image

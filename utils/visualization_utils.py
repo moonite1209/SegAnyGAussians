@@ -37,11 +37,13 @@ def save_image(array, path, dataformat='HWC'):
     image = to_image(array, dataformat)
     image.save(path)
 
-def feature_map_to_image(feature_map: np.ndarray, dataformat='HWC')->np.ndarray:
+def feature_map_to_image(feature_map, dataformat='HWC'):
     array = feature_map
     if isinstance(feature_map, np.ndarray):
         pass
     elif isinstance(feature_map, torch.Tensor):
+        is_tensor = True
+        device = feature_map.device
         feature_map = feature_map.detach().cpu().numpy()
     else:
         raise TypeError()
@@ -61,10 +63,14 @@ def feature_map_to_image(feature_map: np.ndarray, dataformat='HWC')->np.ndarray:
             feature_map = np.concat((feature_map, np.zeros((h,w,1))), axis=-1)
         feature_map_flat = feature_map.reshape(-1,c)
         pca = PCA(n_components=3)
-        feature_map_pca = pca.fit_transform(feature_map_flat).reshape(h, w, -1)
-        feature_map_rgb = cv2.normalize(feature_map_pca, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX).astype(np.uint8)
+        feature_map_3 = pca.fit_transform(feature_map_flat).reshape(h, w, -1)
+        # umap = UMAP(n_components=3, metric='cosine')
+        # feature_map_3 = umap.fit_transform(feature_map_flat).reshape(h, w, -1)
+        feature_map_rgb = cv2.normalize(feature_map_3, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX).astype(np.uint8)
 
     if dataformat=='CHW':
-        return feature_map_rgb.transpose(2,0,1)
-    else:
-        return feature_map_rgb
+        feature_map_rgb = feature_map_rgb.transpose(2,0,1)
+    return torch.from_numpy(feature_map_rgb).to(device) if is_tensor else feature_map_rgb
+
+def feature_to_color(feature_map):
+    ...

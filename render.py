@@ -73,7 +73,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
     with torch.no_grad():
         if precomputed_mask is not None:
             if '.pt' in precomputed_mask:
-                precomputed_mask = torch.load(precomputed_mask)
+                precomputed_mask = torch.load(precomputed_mask, weights_only=True)
             elif '.npy' in precomputed_mask:
                 import numpy as np
                 precomputed_mask = torch.from_numpy(np.load(precomputed_mask)).cuda()

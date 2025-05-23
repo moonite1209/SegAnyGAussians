@@ -41,18 +41,15 @@ def loadCam(args, id, cam_info, resolution_scale):
     resized_image_rgb = PILtoTorch(cam_info.image, resolution)
 
     gt_image = resized_image_rgb[:3, ...]
-    loaded_mask = None
+    gt_alpha_mask = None
 
     if resized_image_rgb.shape[1] == 4:
-        loaded_mask = resized_image_rgb[3:4, ...]
-
-    gt_features = cam_info.features
-    gt_masks = cam_info.masks
+        gt_alpha_mask = resized_image_rgb[3:4, ...]
 
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
-                  image=gt_image, gt_alpha_mask=loaded_mask,
-                  image_name=cam_info.image_name, cx=cam_info.cx, cy=cam_info.cy, features=gt_features, masks = gt_masks, uid=id, data_device=args.data_device)
+                  image=gt_image, gt_alpha_mask=gt_alpha_mask,
+                  image_name=cam_info.image_name, cx=cam_info.cx, cy=cam_info.cy, features=cam_info.features, masks = cam_info.masks, uid=id, data_device=args.data_device)
 
 # def loadCam(emmm):
 

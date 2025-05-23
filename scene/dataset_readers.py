@@ -110,11 +110,11 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, features_fo
             if images_folder and os.path.exists(os.path.join(images_folder, extr.name)) \
                 else None
 
-        features = torch.load(os.path.join(features_folder, image_name_noext + ".pt")) \
+        features = torch.load(os.path.join(features_folder, image_name_noext + ".pt"), weights_only=True) \
             if features_folder and os.path.exists(os.path.join(features_folder, image_name_noext + ".pt")) \
                 else None
         
-        masks = torch.load(os.path.join(masks_folder, image_name_noext + ".pt")) \
+        masks = torch.load(os.path.join(masks_folder, image_name_noext + ".pt"), weights_only=True) \
             if masks_folder and os.path.exists(os.path.join(masks_folder, image_name_noext + ".pt")) \
                 else None
 
