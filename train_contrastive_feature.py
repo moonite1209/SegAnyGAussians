@@ -35,7 +35,7 @@ import pytorch3d.ops
 
 import time
 
-from utils.visualization_utils import feature_map_to_image, feature_to_color
+from utils.visualization_utils import feature_map_to_image, features_to_color
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -307,13 +307,13 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
                 l1_test /= len(config['cameras'])
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 if tb_writer:
-                    tb_writer.add_scalar(f'{config['name']}/loss_viewpoint - l1_loss', l1_test, iteration)
-                    tb_writer.add_scalar(f'{config['name']}/loss_viewpoint - psnr', psnr_test, iteration)
+                    tb_writer.add_scalar(f"{config['name']}/loss_viewpoint - l1_loss", l1_test, iteration)
+                    tb_writer.add_scalar(f"{config['name']}/loss_viewpoint - psnr", psnr_test, iteration)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.feature_gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', scene.feature_gaussians.get_xyz.shape[0], iteration)
-            tb_writer.add_mesh(f'grad', scene.feature_gaussians.get_xyz, colors=feature_to_color(scene.feature_gaussians.get_instance_features.grad), global_step=iteration)
+            tb_writer.add_mesh(f'grad', scene.feature_gaussians.get_xyz, colors=features_to_color(scene.feature_gaussians.get_instance_features.grad), global_step=iteration)
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":

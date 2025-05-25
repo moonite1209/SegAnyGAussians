@@ -238,15 +238,22 @@ def convert_gs_to_splm(input: str, output: str):
         np.ones((elements.count), 'u1'), strict=True))
     vertex_element = PlyElement.describe(vertex_element, 'vertex')
     PlyData([vertex_element]).write(output)
+
+from umap import UMAP
+def test_umap():
+    from utils.visualization_utils import features_to_color
+    f = torch.rand((4,5))
+    print(features_to_color(f))
 def main():
     # pth_to_json()
     # sam_masks_rgb()
     # pick_image()
     # test_clip()
     # test_dinov2()
-    convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/suzongbangongshi/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/suzongbangongshi.ply')
-    convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/juweihui/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/juweihui.ply')
-    convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/hualang/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/hualang.ply')
+    # convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/suzongbangongshi/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/suzongbangongshi.ply')
+    # convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/juweihui/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/juweihui.ply')
+    # convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/hualang/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/hualang.ply')
+    test_umap()
 
 if __name__ =='__main__':
     main()

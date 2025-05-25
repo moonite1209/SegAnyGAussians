@@ -26,7 +26,6 @@ scikit-learn
 umap-learn
 dearpygui
 hdbscan
-open-clip-torch
 joblib
 submodules/diff-gaussian-rasterization
 submodules/diff-gaussian-rasterization_contrastive_f
