@@ -102,7 +102,7 @@ def hsv_to_rgb(hsv):
 
     return rgb
 
-def features_to_color(features):
+def features_to_color(features, use_pca = True):
     """
     将 [N, C] 特征映射到 RGB 颜色。
     
@@ -152,17 +152,19 @@ def features_to_color(features):
 
     else:
         # === 使用 PCA 降维到 3D ===
-        pca = PCA(n_components=3)
-        X_3d = pca.fit_transform(features.numpy())
-        X_3d -= X_3d.min(axis=0, keepdims=True)
-        X_3d /= X_3d.max(axis=0, keepdims=True) + 1e-8
-        return torch.tensor(X_3d, dtype=torch.float32)
+        if use_pca:
+            pca = PCA(n_components=3)
+            X_3d = pca.fit_transform(features.numpy())
+            X_3d -= X_3d.min(axis=0, keepdims=True)
+            X_3d /= X_3d.max(axis=0, keepdims=True) + 1e-8
+            return torch.tensor(X_3d, dtype=torch.float32)
+        else:
         # === 使用 UMAP 降维到 3D ===
-        # reducer = UMAP(n_components=3, metric='cosine')
-        # X_3d = reducer.fit_transform(features.numpy())
-        # X_3d -= X_3d.min(axis=0, keepdims=True)
-        # X_3d /= X_3d.max(axis=0, keepdims=True) + 1e-8
-        # return torch.tensor(X_3d, dtype=torch.float32)
+            reducer = UMAP(n_components=3, metric='cosine')
+            X_3d = reducer.fit_transform(features.numpy())
+            X_3d -= X_3d.min(axis=0, keepdims=True)
+            X_3d /= X_3d.max(axis=0, keepdims=True) + 1e-8
+            return torch.tensor(X_3d, dtype=torch.float32)
 
 def labels_to_color(labels, colormap='tab20'):
     """

@@ -339,7 +339,7 @@ class GaussianSplattingGUI:
             self.cluster_in_3D_flag =True
         def callback_label_change(sender, app_data, user_data):
             self.label = int(list(self.json['instances'].keys())[(list(self.json['instances'].keys()).index(str(self.label))+user_data)%len(list(self.json['instances'].keys()))])
-            dpg.set_value('label', f'{self.label}:{self.json['instances'][str(self.label)]}')
+            dpg.set_value('label', f"{self.label}:{self.json['instances'][str(self.label)]}")
             self.engine['scene'].get_xyz[self.point_labels==self.label]
         def callback_reshuffle_color():
             self.label_to_color = np.random.rand(1000, 3)

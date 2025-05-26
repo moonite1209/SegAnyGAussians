@@ -233,10 +233,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         iter_end.record()
         iter_end.synchronize()
 
-        feature_gaussians.optimizer.step()
-        feature_gaussians.optimizer.zero_grad()
-
-
         if iteration % 10 == 0:
             progress_bar.set_postfix({
                 "pos loss": f"{positive_loss.item():.{3}f}",
@@ -259,6 +255,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         get_render_image = lambda viewpoint: render(viewpoint, feature_gaussians, pipe, background)['render'].detach(), 
                         get_feature_map = lambda viewpoint: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature)['render'].detach())
 
+        feature_gaussians.optimizer.step()
+        feature_gaussians.optimizer.zero_grad()
+
     feature_gaussians.save_ply(args.contrastive_feature_point_cloud_path)
 
 def prepare_logger(args):    
@@ -279,6 +278,8 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
         tb_writer.add_scalar('train_loss/distance_loss', distance_loss.item(), iteration)
         tb_writer.add_scalar('train_loss/outview_loss', outview_loss.item(), iteration)
         tb_writer.add_scalar('iter_time', iter_time, iteration)
+        tb_writer.add_scalar('grad/norm/mean', scene.feature_gaussians._instance_feature.grad.norm(dim=-1).mean(), iteration)
+        tb_writer.add_scalar('grad/norm/std', scene.feature_gaussians._instance_feature.grad.norm(dim=-1).std(), iteration)
 
     # Report test and samples of training set
     if iteration in testing_iterations:
@@ -295,12 +296,13 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     mask_map = get_mask_map(viewpoint.original_masks).permute(2,0,1)
                     feature_map = get_feature_map(viewpoint)
+                    C,H,W = feature_map.shape
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/image/render", image[None], global_step=iteration)
-                        tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/feature/render", feature_map_to_image(feature_map, 'CHW')[None], global_step=iteration)
+                        tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/feature/render", features_to_color(feature_map.reshape(C,-1).permute(1,0)).permute(1,0).reshape(-1,H,W)[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/image/ground_truth", gt_image[None], global_step=iteration)
-                            tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/feature/ground_truth", mask_map, global_step=iteration)
+                            tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/feature/ground_truth", mask_map[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
@@ -313,7 +315,7 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.feature_gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', scene.feature_gaussians.get_xyz.shape[0], iteration)
-            tb_writer.add_mesh(f'grad', scene.feature_gaussians.get_xyz, colors=features_to_color(scene.feature_gaussians.get_instance_features.grad), global_step=iteration)
+            tb_writer.add_mesh(f'grad/', scene.feature_gaussians.get_xyz[None], colors=features_to_color(scene.feature_gaussians._instance_feature.grad)[None], global_step=iteration)
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
