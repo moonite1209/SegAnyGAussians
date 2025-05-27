@@ -119,8 +119,8 @@ class OptimizationParams(ParamGroup):
         self.scale_aware_dim = -1
         self.rfn = 1.
         self.distance_weight = 1.
-        self.positive_weight = 1.
-        self.negative_weight = 1.
+        self.positive_weight = -1.
+        self.negative_weight = -1.
         self.distance_sample_num = 1000
         super().__init__(parser, "Optimization Parameters")
 

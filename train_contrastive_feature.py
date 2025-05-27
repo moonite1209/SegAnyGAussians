@@ -219,9 +219,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
 
         if opt.positive_weight == -1:
-            opt.positive_weight = 2*(sampled_mask_negative.sum()/example_num)
+            opt.positive_weight = 2*(sampled_mask_negative.sum()/example_num).item()
         if opt.negative_weight == -1:
-            opt.negative_weight = 2*(sampled_mask_positive.sum()/example_num)
+            opt.negative_weight = 2*(sampled_mask_positive.sum()/example_num).item()
         loss = opt.positive_weight*positive_loss + opt.negative_weight*negative_loss + opt.rfn * norm_loss + opt.distance_weight * distance_loss + outview_loss
 
         with torch.no_grad():
@@ -243,8 +243,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 "loss": f"{loss.item():.{3}f}",
                 "pos sim": f"{pos_sim.item():.{3}f}",
                 "neg sim": f"{neg_sim.item():.{3}f}",
-                "pos weight": f"{2*(sampled_mask_negative.sum()/example_num).item():.{3}f}",
-                "neg weight": f"{2*(sampled_mask_positive.sum()/example_num).item():.{3}f}",
+                "pos weight": f"{opt.positive_weight:.{3}f}",
+                "neg weight": f"{opt.negative_weight:.{3}f}",
                 "rfn weight": f"{opt.rfn:.{3}f}",
                 "dis weight": f"{opt.distance_weight:.{3}f}",
             })

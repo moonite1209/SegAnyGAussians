@@ -21,6 +21,8 @@ from utils.camera_utils import cameraList_from_camInfos
 from scipy.spatial import KDTree
 from hdbscan import HDBSCAN
 
+from utils.general_utils import safe_state
+
 def uniform_sample(N, n_samples, device = 'cuda:0'):
     # 生成均匀随机采样的索引
     selected_indices = torch.randperm(N,device=device)[:n_samples]
@@ -37,15 +39,18 @@ lp = ModelParams(parser)
 pp = PipelineParams(parser)
 parser.add_argument("--progress_path", type=str, required=True)
 parser.add_argument("--clean", action='store_true')
+parser.add_argument("--quiet", action="store_true")
 parser.add_argument("--k", type=int, default=256)
-parser.add_argument("--feature_ratio", type=float, default=0.5)
+parser.add_argument("--feature_ratio", type=float, default=1)
 parser.add_argument("--instance_threshold", type=float, default=0.5)
 parser.add_argument("--background_threshold", type=float, default=0.5)
 parser.add_argument("--scale_threshold", type=float, default=0.8)
 parser.add_argument("--opcity_threshold", type=float, default=0.01)
-parser.add_argument("--sample_num", type=int, default=10000)
+parser.add_argument("--sample_num", type=int, default=-1)
 parser.add_argument("--classes", nargs="+", type=str, default=['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person'])
 args = parser.parse_args(sys.argv[1:])
+safe_state(args.quiet)
+
 bg_color = torch.tensor([1,1,1] if args.white_background else [0, 0, 0], dtype=torch.float32, device="cuda")
 
 feat_gs_model = FeatureGaussianModel(args.sh_degree, args.feature_dim)
@@ -68,10 +73,14 @@ point_opacities = feat_gs_model.get_opacity.detach().cpu().squeeze()
 is_transparent_gaussian = point_opacities<args.opcity_threshold
 logging.info(f'{point_features.shape=}, {point_xyz.shape=}')
 
-sampled_mask = uniform_sample(point_xyz.shape[0], args.sample_num, device='cpu')
+sample_num = args.sample_num
+if sample_num < 0:
+    sampled_mask = torch.rand(point_xyz.shape[0]) > 0.99
+    sample_num = sampled_mask.sum()
+else:
+    sampled_mask = uniform_sample(point_xyz.shape[0], sample_num, device='cpu')
 
-normed_point_features = F.normalize(point_features, dim = -1, p = 2)
-sampled_normed_point_features = normed_point_features[sampled_mask]
+sampled_point_features = point_features[sampled_mask]
 
 min_val = torch.min(point_xyz, dim=0).values
 max_val = torch.max(point_xyz, dim=0).values
@@ -80,28 +89,35 @@ new_max = 1.0
 std_point_xyz = (point_xyz - min_val) / (max_val - min_val) * (new_max - new_min) + new_min
 sampled_std_point_xyz = std_point_xyz[sampled_mask]
 
-hybird_point_features = torch.cat((normed_point_features, std_point_xyz), dim=1)
-sampled_hybird_point_features = torch.cat((sampled_normed_point_features, sampled_std_point_xyz), dim=1)
+hybird_point_features = torch.cat((point_features, std_point_xyz), dim=1)
+sampled_hybird_point_features = torch.cat((sampled_point_features, sampled_std_point_xyz), dim=1)
 
-sampled_normed_point_features_distance = torch.clamp(1-torch.einsum('ac,bc -> ab', sampled_normed_point_features, sampled_normed_point_features), 0)
-sampled_std_point_xyz_distance = torch.clamp(torch.norm(sampled_std_point_xyz[:,None,:] - sampled_std_point_xyz[None,:,:], dim=-1), 0)
-hybird_distance = args.feature_ratio*sampled_normed_point_features_distance + (1-args.feature_ratio)*sampled_std_point_xyz_distance
+def get_hybird_sim(a, b):
+    point_feature1 = a[:-3]
+    std_point_xyz1 = a[-3:]
+    point_feature2 = b[:-3]
+    std_point_xyz2 = b[-3:]
+    feature_sim = np.clip((np.dot(point_feature1, point_feature2)+1)/2, 0, 1)
+    std_xyz_sim = np.clip(np.exp(-np.linalg.norm(std_point_xyz1 - std_point_xyz2)), 0, 1)
+    return args.feature_ratio * feature_sim + (1-args.feature_ratio) * std_xyz_sim
+clusterer = HDBSCAN(min_cluster_size=10, cluster_selection_epsilon=0.01, allow_single_cluster = False, metric='precomputed', core_dist_n_jobs=-1) # HDBSCAN
 
-clusterer = HDBSCAN(min_cluster_size=10, cluster_selection_epsilon=0.01, allow_single_cluster = False, metric='precomputed') # HDBSCAN
-
-cluster_labels = clusterer.fit_predict(hybird_distance.numpy().astype(np.float64))
+sampled_point_features_sim = torch.clamp(torch.einsum('ac,bc -> ab', sampled_point_features, sampled_point_features)/2+0.5, 0, 1)
+sampled_std_point_xyz_sim = torch.clamp(torch.exp(-torch.norm(sampled_std_point_xyz[:,None,:] - sampled_std_point_xyz[None,:,:], dim=-1)), 0, 1)
+sampled_hybird_sim = args.feature_ratio*sampled_point_features_sim + (1-args.feature_ratio)*sampled_std_point_xyz_sim
+cluster_labels = clusterer.fit_predict(sampled_hybird_sim.numpy().astype(np.float64))
 
 feature_cluster_centers = torch.zeros(len(np.unique(cluster_labels)) - 1, point_features.shape[-1])
 xyz_cluster_centers = torch.zeros(len(np.unique(cluster_labels)) - 1, point_xyz.shape[-1])
 for i in np.unique(cluster_labels):
     if i<0:
         continue
-    feature_cluster_centers[i] = F.normalize(sampled_normed_point_features[cluster_labels == i].mean(dim = 0), dim = -1)
+    feature_cluster_centers[i] = sampled_point_features[cluster_labels == i].mean(dim = 0)
     xyz_cluster_centers[i] = sampled_std_point_xyz[cluster_labels == i].mean(dim = 0)
 
-normed_point_features_sim = torch.clamp(torch.einsum('ac,bc->ab', normed_point_features, feature_cluster_centers), -1, 1)
+point_features_sim = torch.clamp(torch.einsum('ac,bc->ab', point_features, feature_cluster_centers), -1, 1)
 std_point_xyz_sim = torch.clamp(torch.exp(-torch.norm(std_point_xyz[:,None,:] - xyz_cluster_centers[None,:,:], dim=-1)), 0, 1)
-hybird_sim = args.feature_ratio*normed_point_features_sim + (1-args.feature_ratio)*std_point_xyz_sim
+hybird_sim = args.feature_ratio*point_features_sim + (1-args.feature_ratio)*std_point_xyz_sim
 confidence = torch.softmax(hybird_sim*10, dim=-1)
 mask, point_labels = confidence.max(dim=-1)
 mask = mask>args.instance_threshold
