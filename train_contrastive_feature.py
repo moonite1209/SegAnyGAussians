@@ -205,7 +205,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # distance_loss = (ptp_xyz_distance*torch.clamp(ptp_feature_sim,0)).mean()
 
         outview_loss = torch.tensor(0.,device='cuda')
-        if iteration > opt.iterations//2:
+        if iteration > iterations//2:
             for sam_mask in sam_masks:
                 sam_mask = sam_mask.bool()
                 if on_boundary(sam_mask):
@@ -213,7 +213,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 mask_feature = F.normalize(rendered_features[:,sam_mask].permute((1,0)).mean(dim=0,keepdim=True),dim=-1)
                 invisable_feature = feature_gaussians.get_instance_features[~visibility_filter]
                 outview_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature)).mean()
-        # if iteration > opt.iterations//2:
+        # if iteration > iterations//2:
         #     for sam_mask in sam_masks:
         #         sam_mask = sam_mask.bool()
         #         if on_boundary(sam_mask):
