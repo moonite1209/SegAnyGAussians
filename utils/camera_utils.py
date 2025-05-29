@@ -9,6 +9,7 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import torch
 from scene.cameras import Camera
 import numpy as np
 from utils.general_utils import PILtoTorch
@@ -93,6 +94,14 @@ def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     for id, c in enumerate(cam_infos):
         camera_list.append(loadCam(args, id, c, resolution_scale))
     return camera_list
+
+
+class CameraDataset(torch.utils.data.Dataset):
+    def __init__(self, cam_infos, resolution_scale, args):
+        self.cam_infos = cam_infos
+        self.length = len(cam_infos)
+def cameraDataset_from_camInfos(cam_infos, resolution_scale, args):
+    return CameraDataset(cam_infos, resolution_scale, args)
 
 
 # from multiprocessing import Pool

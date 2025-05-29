@@ -263,13 +263,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 def prepare_logger(args):    
     # Create Tensorboard writer
     tb_writer = None
-    if TENSORBOARD_FOUND:
+    if TENSORBOARD_FOUND and os.path.exists(args.log_path):
         tb_writer = SummaryWriter(args.log_path)
     else:
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
 def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_time, get_render_image, get_feature_map):
+    if tb_writer is None:
+        return
     if tb_writer:
         tb_writer.add_scalar('train_loss/loss', loss.item(), iteration)
         tb_writer.add_scalar('train_loss/positive_loss', positive_loss.item(), iteration)
