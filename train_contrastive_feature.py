@@ -191,18 +191,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         negative_loss = (per_pixel_weight[sampled_mask_negative] * (1 - gt_corrs[sampled_mask_negative]) * torch.relu(corr[sampled_mask_negative])).mean()
 
         distance_loss = torch.tensor(0.,device='cuda')
-        min_val = torch.min(feature_gaussians.get_xyz, dim=0).values
-        max_val = torch.max(feature_gaussians.get_xyz, dim=0).values
-        new_min = 0.0
-        new_max = 1.0
-        std_point_xyz = (feature_gaussians.get_xyz - min_val) / (max_val - min_val) * (new_max - new_min) + new_min
-        sample_mask = uniform_sample(feature_gaussians.get_xyz.shape[0], opt.distance_sample_num)
-        sample_xyz = std_point_xyz[sample_mask]
-        sample_features = feature_gaussians.get_instance_features[sample_mask]
-        sample_scaled_features = F.normalize(sample_features, dim=-1)
-        ptp_xyz_distance = torch.norm(sample_xyz[:,None,:] - sample_xyz[None,:,:], dim=-1) # float[fps,fps]
-        ptp_feature_sim = torch.einsum('ac, bc -> ab', sample_scaled_features, sample_scaled_features) # float[fps,fps]
-        distance_loss = (ptp_xyz_distance*torch.clamp(ptp_feature_sim,0)).mean()
+        # min_val = torch.min(feature_gaussians.get_xyz, dim=0).values
+        # max_val = torch.max(feature_gaussians.get_xyz, dim=0).values
+        # new_min = 0.0
+        # new_max = 1.0
+        # std_point_xyz = (feature_gaussians.get_xyz - min_val) / (max_val - min_val) * (new_max - new_min) + new_min
+        # sample_mask = uniform_sample(feature_gaussians.get_xyz.shape[0], opt.distance_sample_num)
+        # sample_xyz = std_point_xyz[sample_mask]
+        # sample_features = feature_gaussians.get_instance_features[sample_mask]
+        # sample_scaled_features = F.normalize(sample_features, dim=-1)
+        # ptp_xyz_distance = torch.norm(sample_xyz[:,None,:] - sample_xyz[None,:,:], dim=-1) # float[fps,fps]
+        # ptp_feature_sim = torch.einsum('ac, bc -> ab', sample_scaled_features, sample_scaled_features) # float[fps,fps]
+        # distance_loss = (ptp_xyz_distance*torch.clamp(ptp_feature_sim,0)).mean()
 
         outview_loss = torch.tensor(0.,device='cuda')
         if iteration > opt.iterations//2:
