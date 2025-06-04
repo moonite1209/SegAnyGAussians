@@ -147,6 +147,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             sampled_ray = torch.rand(sam_masks.shape[-2], sam_masks.shape[-1]).cuda()
             sampled_ray = sampled_ray < ray_sample_rate # bool[h, w]
+
+            per_pixel_mask_size = sam_masks * sam_masks[:,sampled_ray].count_nonzero(dim=-1)[:,None,None] # mask fill with size, [masks, h, w]
+            background_mask_size = background_mask * background_mask[sampled_ray].count_nonzero(dim=-1)[None,None]
+            per_pixel_mean_mask_size = (per_pixel_mask_size.sum(dim = 0) + background_mask_size) / (sam_masks.sum(dim = 0) + background_mask) # float[h, w]
+            per_sample_mask_size = per_pixel_mean_mask_size[sampled_ray]
+            per_sample_weight = 1 / per_sample_mask_size
+
             # H W
             # per_pixel_mask_size = sam_masks * sam_masks.sum(-1).sum(-1)[:,None,None] # mask fill with size, [masks, h, w]
 
@@ -177,18 +184,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         norm_loss = (1-rendered_feature_norm)**2 # regularization term, keep aligned on a ray
 
         sampled_features = rendered_features[:,sampled_ray].permute((1,0)) # float[sampled scales, C, sampled pixels]
-        corr = torch.einsum('ac,bc->ab', sampled_features, sampled_features) # sampled pixel to sampled pixel similarity, float[sampled pixels, sampled pixels]
+        corr = torch.einsum('ac,bc->ab', sampled_features, sampled_features.detach()) # sampled pixel to sampled pixel similarity, float[sampled pixels, sampled pixels]
 
         sampled_mask_positive = gt_corrs == 1 # two sampled pixels belong to different mask in any sampled scales, bool[sampled pixels, sampled pixels]
         sampled_mask_positive &= ~(background_sample_mask.float()[:,None]@background_sample_mask.float()[None,:]).bool()
-        sampled_mask_positive = torch.triu(sampled_mask_positive, diagonal=1)
+        # sampled_mask_positive = torch.triu(sampled_mask_positive, diagonal=1)
 
         sampled_mask_negative = gt_corrs == 0 # two sampled pixels belong to same mask in any sampled scales, bool[sampled pixels, sampled pixels]
-        sampled_mask_negative = torch.triu(sampled_mask_negative, diagonal=1)
+        # sampled_mask_negative = torch.triu(sampled_mask_negative, diagonal=1)
         
         example_num = sampled_mask_positive.sum()+sampled_mask_negative.sum()
         positive_loss = (- corr[sampled_mask_positive]).mean()
         negative_loss = (torch.relu(corr[sampled_mask_negative])).mean()
+        comp_loss = torch.zeros_like(corr)
+        comp_loss[sampled_mask_positive] = - corr[sampled_mask_positive]
+        comp_loss[sampled_mask_negative] = torch.relu(corr[sampled_mask_negative])
+        weighted_comp_loss = (comp_loss * per_sample_weight[None,...]).sum(dim=-1).mean()
 
         distance_loss = torch.tensor(0.,device='cuda')
         # min_val = torch.min(feature_gaussians.get_xyz, dim=0).values
@@ -230,7 +241,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             opt.positive_weight = 2*(sampled_mask_negative.sum()/example_num).item()
         if opt.negative_weight == -1:
             opt.negative_weight = 2*(sampled_mask_positive.sum()/example_num).item()
-        loss = opt.positive_weight*positive_loss + opt.negative_weight*negative_loss + opt.rfn * norm_loss + opt.distance_weight * distance_loss + outview_loss
+        loss = weighted_comp_loss + opt.rfn * norm_loss + opt.distance_weight * distance_loss + outview_loss
+        positive_loss = weighted_comp_loss
 
         with torch.no_grad():
             pos_sim = corr[gt_corrs == 1].mean()
@@ -326,7 +338,7 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.feature_gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', scene.feature_gaussians.get_xyz.shape[0], iteration)
-            tb_writer.add_mesh(f'grad/', scene.feature_gaussians.get_xyz[None], colors=features_to_color(scene.feature_gaussians._instance_feature.grad)[None], global_step=iteration)
+            tb_writer.add_mesh(f'point_features', scene.feature_gaussians.get_xyz[None], colors=features_to_color(scene.feature_gaussians.get_instance_features)[None], global_step=iteration)
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
