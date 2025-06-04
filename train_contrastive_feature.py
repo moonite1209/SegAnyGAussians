@@ -140,12 +140,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         with torch.no_grad():
             # N_mask, H, W
             sam_masks = viewpoint_cam.original_masks.cuda() # float[masks, h, w]
+            N,H,W = sam_masks.shape
             viewpoint_cam.feature_height, viewpoint_cam.feature_width = viewpoint_cam.image_height, viewpoint_cam.image_width
 
             background_mask = ~sam_masks.any(dim=0)
             ray_sample_rate = opt.ray_sample_rate if opt.ray_sample_rate > 0 else torch.clamp(torch.tensor(opt.num_sampled_rays / sam_masks[0].numel()), 0, 1)
 
-            sampled_ray = torch.rand(sam_masks.shape[-2], sam_masks.shape[-1]).cuda()
+            sampled_ray = torch.rand(H,W).cuda()
             sampled_ray = sampled_ray < ray_sample_rate # bool[h, w]
 
             per_pixel_mask_size = sam_masks * sam_masks[:,sampled_ray].count_nonzero(dim=-1)[:,None,None] # mask fill with size, [masks, h, w]
@@ -192,14 +193,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         sampled_mask_negative = gt_corrs == 0 # two sampled pixels belong to same mask in any sampled scales, bool[sampled pixels, sampled pixels]
         # sampled_mask_negative = torch.triu(sampled_mask_negative, diagonal=1)
+        per_mask_weight = torch.ones_like(sampled_mask_negative)*(1/N)*sampled_mask_negative
         
         example_num = sampled_mask_positive.sum()+sampled_mask_negative.sum()
         positive_loss = (- corr[sampled_mask_positive]).mean()
         negative_loss = (torch.relu(corr[sampled_mask_negative])).mean()
         comp_loss = torch.zeros_like(corr)
-        comp_loss[sampled_mask_positive] = - corr[sampled_mask_positive]
+        comp_loss[sampled_mask_positive] = - 10*corr[sampled_mask_positive]
         comp_loss[sampled_mask_negative] = torch.relu(corr[sampled_mask_negative])
-        weighted_comp_loss = (comp_loss * per_sample_weight[None,...]).sum(dim=-1).mean()
+        weighted_comp_loss = (comp_loss * per_sample_weight[None,...] * per_mask_weight).sum(dim=-1).mean()
 
         distance_loss = torch.tensor(0.,device='cuda')
         # min_val = torch.min(feature_gaussians.get_xyz, dim=0).values
@@ -223,7 +225,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     continue
                 mask_feature = F.normalize(rendered_features[:,sam_mask].permute((1,0)).mean(dim=0,keepdim=True),dim=-1)
                 invisable_feature = feature_gaussians.get_instance_features[~visibility_filter]
-                outview_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature)).mean()
+                outview_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature.detach())).mean()
         # if iteration > iterations//2:
         #     for sam_mask in sam_masks:
         #         sam_mask = sam_mask.bool()
@@ -338,7 +340,7 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.feature_gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', scene.feature_gaussians.get_xyz.shape[0], iteration)
-            tb_writer.add_mesh(f'point_features', scene.feature_gaussians.get_xyz[None], colors=features_to_color(scene.feature_gaussians.get_instance_features)[None], global_step=iteration)
+            tb_writer.add_mesh(f'point_features', scene.feature_gaussians.get_xyz[None], colors=features_to_color(scene.feature_gaussians.get_instance_features)[None]*255, global_step=iteration)
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
