@@ -139,32 +139,32 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             continue
         with torch.no_grad():
             # N_mask, H, W
-            sam_masks = viewpoint_cam.original_masks.cuda().float() # float[masks, h, w]
+            sam_masks = viewpoint_cam.original_masks.cuda() # float[masks, h, w]
             viewpoint_cam.feature_height, viewpoint_cam.feature_width = viewpoint_cam.image_height, viewpoint_cam.image_width
 
-            background_mask = (sam_masks.sum(dim = 0) == 0).float()
-            ray_sample_rate = opt.ray_sample_rate if opt.ray_sample_rate > 0 else torch.clamp(torch.tensor(opt.num_sampled_rays / (sam_masks.shape[-2]*sam_masks.shape[-1])), 0, 1)
+            background_mask = ~sam_masks.any(dim=0)
+            ray_sample_rate = opt.ray_sample_rate if opt.ray_sample_rate > 0 else torch.clamp(torch.tensor(opt.num_sampled_rays / sam_masks[0].numel()), 0, 1)
 
             sampled_ray = torch.rand(sam_masks.shape[-2], sam_masks.shape[-1]).cuda()
-            sampled_ray = sampled_ray < ray_sample_rate
+            sampled_ray = sampled_ray < ray_sample_rate # bool[h, w]
             # H W
-            per_pixel_mask_size = sam_masks * sam_masks.sum(-1).sum(-1)[:,None,None] # mask fill with size, [masks, h, w]
+            # per_pixel_mask_size = sam_masks * sam_masks.sum(-1).sum(-1)[:,None,None] # mask fill with size, [masks, h, w]
 
-            per_pixel_mean_mask_size = per_pixel_mask_size.sum(dim = 0) / (sam_masks.sum(dim = 0) + 1e-9) # float[h, w]
+            # per_pixel_mean_mask_size = per_pixel_mask_size.sum(dim = 0) / (sam_masks.sum(dim = 0) + 1e-9) # float[h, w]
 
-            per_pixel_mean_mask_size = per_pixel_mean_mask_size[sampled_ray] # sampled pixel mean mask size, float[sampled pixels]
+            # per_pixel_mean_mask_size = per_pixel_mean_mask_size[sampled_ray] # sampled pixel mean mask size, float[sampled pixels]
 
 
-            pixel_to_pixel_mask_size = per_pixel_mean_mask_size.unsqueeze(0) * per_pixel_mean_mask_size.unsqueeze(1) # float[1, sampled pixels] * float[sampled pixels, 1] -> float[sampled pixels, sampled pixels]
-            ptp_max_size = pixel_to_pixel_mask_size.max()
-            pixel_to_pixel_mask_size[pixel_to_pixel_mask_size == 0] = 1e10
-            per_pixel_weight = torch.clamp(ptp_max_size / pixel_to_pixel_mask_size, 1.0, None)
-            per_pixel_weight = (per_pixel_weight - per_pixel_weight.min()) / (per_pixel_weight.max() - per_pixel_weight.min() + 1e-9) * 9. + 1. # pixel的平均mask size越大其权重越小, float[sampled pixels, sampled pixels]
+            # pixel_to_pixel_mask_size = per_pixel_mean_mask_size.unsqueeze(0) * per_pixel_mean_mask_size.unsqueeze(1) # float[1, sampled pixels] * float[sampled pixels, 1] -> float[sampled pixels, sampled pixels]
+            # ptp_max_size = pixel_to_pixel_mask_size.max()
+            # pixel_to_pixel_mask_size[pixel_to_pixel_mask_size == 0] = 1e10
+            # per_pixel_weight = torch.clamp(ptp_max_size / pixel_to_pixel_mask_size, 1.0, None)
+            # per_pixel_weight = (per_pixel_weight - per_pixel_weight.min()) / (per_pixel_weight.max() - per_pixel_weight.min() + 1e-9) * 9. + 1. # pixel的平均mask size越大其权重越小, float[sampled pixels, sampled pixels]
             
-            sam_masks_sampled_ray = sam_masks[:, sampled_ray] # bool[masks, sampled pixels]
+            sam_masks_sample_mask = sam_masks[:, sampled_ray] # bool[masks, sampled pixels]
             background_sample_mask = background_mask[sampled_ray]
 
-            gt_vec = sam_masks_sampled_ray # float[masks, sampled pixels], a pixel belong to a mask
+            gt_vec = sam_masks_sample_mask.float() # float[masks, sampled pixels], a pixel belong to a mask
             gt_corrs = torch.einsum('nh,nj->hj', gt_vec, gt_vec)
             gt_corrs[gt_corrs != 0] = 1 # float[sampled pixels, sampled pixels], a pixel in the same mask with another pixel
 
@@ -180,15 +180,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         corr = torch.einsum('ac,bc->ab', sampled_features, sampled_features) # sampled pixel to sampled pixel similarity, float[sampled pixels, sampled pixels]
 
         sampled_mask_positive = gt_corrs == 1 # two sampled pixels belong to different mask in any sampled scales, bool[sampled pixels, sampled pixels]
-        sampled_mask_positive &= ~(background_sample_mask[:,None]@background_sample_mask[None,:]).bool()
+        sampled_mask_positive &= ~(background_sample_mask.float()[:,None]@background_sample_mask.float()[None,:]).bool()
         sampled_mask_positive = torch.triu(sampled_mask_positive, diagonal=1)
 
         sampled_mask_negative = gt_corrs == 0 # two sampled pixels belong to same mask in any sampled scales, bool[sampled pixels, sampled pixels]
         sampled_mask_negative = torch.triu(sampled_mask_negative, diagonal=1)
         
         example_num = sampled_mask_positive.sum()+sampled_mask_negative.sum()
-        positive_loss = (- per_pixel_weight[sampled_mask_positive] * gt_corrs[sampled_mask_positive] * corr[sampled_mask_positive]).mean()
-        negative_loss = (per_pixel_weight[sampled_mask_negative] * (1 - gt_corrs[sampled_mask_negative]) * torch.relu(corr[sampled_mask_negative])).mean()
+        positive_loss = (- corr[sampled_mask_positive]).mean()
+        negative_loss = (torch.relu(corr[sampled_mask_negative])).mean()
 
         distance_loss = torch.tensor(0.,device='cuda')
         # min_val = torch.min(feature_gaussians.get_xyz, dim=0).values
@@ -207,7 +207,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         outview_loss = torch.tensor(0.,device='cuda')
         if iteration > iterations//2:
             for sam_mask in sam_masks:
-                sam_mask = sam_mask.bool()
+                # sam_mask = sam_mask.bool()
                 if on_boundary(sam_mask):
                     continue
                 mask_feature = F.normalize(rendered_features[:,sam_mask].permute((1,0)).mean(dim=0,keepdim=True),dim=-1)
@@ -294,8 +294,9 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
+        train_cameras = scene.getTrainCameras()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
-                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+                              {'name': 'train', 'cameras' : [train_cameras[idx % len(train_cameras)] for idx in range(0, len(train_cameras), len(train_cameras)//10+1)]})
 
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
@@ -307,7 +308,7 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
                     mask_map = get_mask_map(viewpoint.original_masks).permute(2,0,1)
                     feature_map = get_feature_map(viewpoint)
                     C,H,W = feature_map.shape
-                    if tb_writer and (idx < 5):
+                    if tb_writer:
                         tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/image/render", image[None], global_step=iteration)
                         tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/feature/render", features_to_color(feature_map.reshape(C,-1).permute(1,0)).permute(1,0).reshape(-1,H,W)[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
