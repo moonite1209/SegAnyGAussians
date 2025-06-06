@@ -157,11 +157,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         backgroud_feature = F.normalize(rendered_features[background_mask].mean(dim=0), dim=-1)
         intra_loss = []
         for sam_mask, mask_feature in zip(sam_masks, mask_features, strict=True):
-            intra_loss.append(((rendered_features[sam_mask]@mask_feature.detach())/2+0.5).mean())
-        intra_loss = -torch.log(torch.stack(intra_loss).mean())
+            intra_loss.append((-(rendered_features[sam_mask]@mask_feature.detach())).mean())
+        intra_loss = torch.stack(intra_loss).mean()
 
-        inter_mask_sim = torch.einsum('ac, bc -> ab', torch.cat((mask_features, backgroud_feature[None])), torch.cat((mask_features, backgroud_feature[None])))
-        inter_loss = torch.relu(inter_mask_sim[torch.triu(torch.ones_like(inter_mask_sim, dtype=torch.bool), diagonal=1)]).mean()
+        inter_mask_sim = torch.einsum('ac, bc -> ab', torch.cat((mask_features, backgroud_feature[None])), torch.cat((mask_features, backgroud_feature[None])).detach())
+        inter_loss = torch.relu(inter_mask_sim).mean()
 
         distance_loss = torch.tensor(0.,device='cuda')
         # min_val = torch.min(feature_gaussians.get_xyz, dim=0).values
@@ -185,7 +185,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     continue
                 mask_feature = F.normalize(rendered_features[sam_mask].mean(dim=0,keepdim=True),dim=-1)
                 invisable_feature = feature_gaussians.get_instance_features[~visibility_filter]
-                outview_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature)).mean()
+                outview_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature.detach())).mean()
         # if iteration > iterations//2:
         #     for sam_mask in sam_masks:
         #         sam_mask = sam_mask.bool()
@@ -262,8 +262,9 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
+        train_cameras = scene.getTrainCameras()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
-                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+                              {'name': 'train', 'cameras' : [train_cameras[idx % len(train_cameras)] for idx in range(0, len(train_cameras), (len(train_cameras)+9)//10)]})
 
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
@@ -275,7 +276,7 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
                     mask_map = get_mask_map(viewpoint.original_masks).permute(2,0,1)
                     feature_map = get_feature_map(viewpoint)
                     C,H,W = feature_map.shape
-                    if tb_writer and (idx < 5):
+                    if tb_writer:
                         tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/image/render", image[None], global_step=iteration)
                         tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/feature/render", features_to_color(feature_map.reshape(C,-1).permute(1,0)).permute(1,0).reshape(-1,H,W)[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
@@ -293,7 +294,7 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.feature_gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', scene.feature_gaussians.get_xyz.shape[0], iteration)
-            tb_writer.add_mesh(f'grad/', scene.feature_gaussians.get_xyz[None], colors=features_to_color(scene.feature_gaussians._instance_feature.grad)[None], global_step=iteration)
+            tb_writer.add_mesh(f'point_features', scene.feature_gaussians.get_xyz[None], colors=features_to_color(scene.feature_gaussians.get_instance_features)[None]*255, global_step=iteration)
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
