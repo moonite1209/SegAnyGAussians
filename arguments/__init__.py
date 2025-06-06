@@ -69,6 +69,7 @@ class ModelParams(ParamGroup):
         self.json_path = ''
         self.features_path = ''
         self.log_path = ''
+        self.xyz_map_path = ''
 
         super().__init__(parser, "Loading Parameters", sentinel)
 
