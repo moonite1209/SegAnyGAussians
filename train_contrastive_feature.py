@@ -193,7 +193,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         sampled_mask_negative = gt_corrs == 0 # two sampled pixels belong to same mask in any sampled scales, bool[sampled pixels, sampled pixels]
         # sampled_mask_negative = torch.triu(sampled_mask_negative, diagonal=1)
-        per_mask_weight = torch.ones_like(sampled_mask_negative)*(1/N)*sampled_mask_negative
+        per_mask_weight = torch.ones_like(sampled_mask_negative, dtype=torch.float)
+        per_mask_weight[sampled_mask_negative] = 1/N
         
         example_num = sampled_mask_positive.sum()+sampled_mask_negative.sum()
         positive_loss = (- corr[sampled_mask_positive]).mean()
@@ -218,14 +219,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # distance_loss = (ptp_xyz_distance*torch.clamp(ptp_feature_sim,0)).mean()
 
         outview_loss = torch.tensor(0.,device='cuda')
-        if iteration > iterations//2:
-            for sam_mask in sam_masks:
-                # sam_mask = sam_mask.bool()
-                if on_boundary(sam_mask):
-                    continue
-                mask_feature = F.normalize(rendered_features[:,sam_mask].permute((1,0)).mean(dim=0,keepdim=True),dim=-1)
-                invisable_feature = feature_gaussians.get_instance_features[~visibility_filter]
-                outview_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature.detach())).mean()
+        # if iteration > iterations//2:
+        #     for sam_mask in sam_masks:
+        #         # sam_mask = sam_mask.bool()
+        #         if on_boundary(sam_mask):
+        #             continue
+        #         mask_feature = F.normalize(rendered_features[:,sam_mask].permute((1,0)).mean(dim=0,keepdim=True),dim=-1)
+        #         invisable_feature = feature_gaussians.get_instance_features[~visibility_filter]
+        #         outview_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature.detach())).mean()
         # if iteration > iterations//2:
         #     for sam_mask in sam_masks:
         #         sam_mask = sam_mask.bool()
