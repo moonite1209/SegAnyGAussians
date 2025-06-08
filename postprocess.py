@@ -42,7 +42,7 @@ parser.add_argument("--clean", action='store_true')
 parser.add_argument("--quiet", action="store_true")
 parser.add_argument("--k", type=int, default=256)
 parser.add_argument("--feature_ratio", type=float, default=1)
-parser.add_argument("--instance_threshold", type=float, default=0.5)
+parser.add_argument("--instance_threshold", type=float, default=0.25)
 parser.add_argument("--background_threshold", type=float, default=0.5)
 parser.add_argument("--scale_threshold", type=float, default=0.8)
 parser.add_argument("--opcity_threshold", type=float, default=0.01)
@@ -112,7 +112,7 @@ xyz_cluster_centers = torch.zeros(len(np.unique(cluster_labels)) - 1, point_xyz.
 for i in np.unique(cluster_labels):
     if i<0:
         continue
-    feature_cluster_centers[i] = sampled_point_features[cluster_labels == i].mean(dim = 0)
+    feature_cluster_centers[i] = F.normalize(sampled_point_features[cluster_labels == i].mean(dim = 0),dim=-1)
     xyz_cluster_centers[i] = sampled_std_point_xyz[cluster_labels == i].mean(dim = 0)
 
 point_features_sim = torch.clamp(torch.einsum('ac,bc->ab', point_features, feature_cluster_centers)/2+0.5, 0, 1)

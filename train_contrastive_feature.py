@@ -157,11 +157,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         backgroud_feature = F.normalize(rendered_features[background_mask].mean(dim=0), dim=-1)
         intra_loss = []
         for sam_mask, mask_feature in zip(sam_masks, mask_features, strict=True):
-            intra_loss.append((-(rendered_features[sam_mask]@mask_feature.detach())).mean())
+            intra_loss.append((-(rendered_features[sam_mask]@mask_feature[None].permute(1,0).detach())).mean())
         intra_loss = torch.stack(intra_loss).mean()
 
-        inter_mask_sim = torch.einsum('ac, bc -> ab', torch.cat((mask_features, backgroud_feature[None])), torch.cat((mask_features, backgroud_feature[None])).detach())
-        inter_loss = torch.relu(inter_mask_sim).mean()
+        inter_mask_sim = torch.einsum('ac, bc -> ab', mask_features, torch.cat((mask_features, backgroud_feature[None])).detach())
+        inter_loss_mask = torch.cat((~torch.eye(mask_features.shape[0],dtype=torch.bool,device=inter_mask_sim.device),torch.ones(mask_features.shape[0],dtype=torch.bool,device=inter_mask_sim.device)[:,None]),dim=-1)
+        inter_loss = (torch.clamp(inter_mask_sim,-0.5)*inter_loss_mask).sum(-1).mean()
 
         distance_loss = torch.tensor(0.,device='cuda')
         # min_val = torch.min(feature_gaussians.get_xyz, dim=0).values
@@ -178,14 +179,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # distance_loss = (ptp_xyz_distance*torch.clamp(ptp_feature_sim,0)).mean()
 
         outview_loss = torch.tensor(0.,device='cuda')
-        if iteration > iterations//2:
-            for sam_mask in sam_masks:
-                sam_mask = sam_mask.bool()
-                if on_boundary(sam_mask):
-                    continue
-                mask_feature = F.normalize(rendered_features[sam_mask].mean(dim=0,keepdim=True),dim=-1)
-                invisable_feature = feature_gaussians.get_instance_features[~visibility_filter]
-                outview_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature.detach())).mean()
+        # if iteration > iterations//2:
+        #     for sam_mask in sam_masks:
+        #         sam_mask = sam_mask.bool()
+        #         if on_boundary(sam_mask):
+        #             continue
+        #         mask_feature = F.normalize(rendered_features[sam_mask].mean(dim=0,keepdim=True),dim=-1)
+        #         invisable_feature = feature_gaussians.get_instance_features[~visibility_filter]
+        #         outview_loss += torch.relu(torch.einsum('ac,bc->ab', mask_feature, invisable_feature.detach())).mean()
         # if iteration > iterations//2:
         #     for sam_mask in sam_masks:
         #         sam_mask = sam_mask.bool()
