@@ -3,10 +3,9 @@ import torch
 import os
 import json
 import sys
-import logging
 from datetime import datetime
 from tqdm import tqdm
-from gaussian_renderer import render_with_max_contributor
+from gaussian_renderer import render_with_max_contributor, render_with_depth
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams
 # from gaussian_renderer import GaussianModel
@@ -32,8 +31,6 @@ def uniform_sample(N, n_samples, device = 'cuda:0'):
     mask[selected_indices] = True
     return mask
 
-logging.basicConfig(level=logging.DEBUG, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 parser = ArgumentParser(description="Training script parameters")
 lp = ModelParams(parser)
 pp = PipelineParams(parser)
@@ -64,6 +61,8 @@ except:
                                 read_intrinsics_text(os.path.join(args.sparse_path, 'cameras.txt')), 
                                 args.images_path)
 camera_list = cameraList_from_camInfos(cameras, 1, args)
+for camera in camera_list:
+    depth = render_with_depth(camera, feat_gs_model, args, bg_color,override_mask=torch.zeros_like(feat_gs_model.get_xyz)[:,0])['depth']
 
 point_features = feat_gs_model.get_instance_features.detach().cpu()
 point_xyz = feat_gs_model.get_xyz.detach().cpu()
@@ -71,7 +70,7 @@ point_scales = feat_gs_model.get_scaling.detach().cpu()
 is_big_gaussian = point_scales.max(dim=-1).values>point_scales.max(dim=-1).values.median()*args.scale_threshold
 point_opacities = feat_gs_model.get_opacity.detach().cpu().squeeze()
 is_transparent_gaussian = point_opacities<args.opcity_threshold
-logging.info(f'{point_features.shape=}, {point_xyz.shape=}')
+print(f'{point_features.shape=}, {point_xyz.shape=}')
 
 sample_num = args.sample_num
 if sample_num < 0:
@@ -121,11 +120,11 @@ hybird_sim = args.feature_ratio*point_features_sim + (1-args.feature_ratio)*std_
 confidence = torch.softmax(hybird_sim*10, dim=-1)
 mask, point_labels = confidence.max(dim=-1)
 mask = mask>args.instance_threshold
-logging.debug(f'{mask.sum()=}, {(~mask).sum()=}')
+print(f'{mask.sum()=}, {(~mask).sum()=}')
 point_labels[~mask] = -1
-logging.info(f'HDBSCAN finish')
+print(f'HDBSCAN finish')
 def filter3d(pos, label, k):
-    logging.info('begin filter3d')
+    print('begin filter3d')
     assert pos.shape[0] == label.shape[0]
     pos=pos.detach().cpu().numpy()
     label=label.detach().cpu().numpy()
@@ -147,12 +146,12 @@ def filter3d(pos, label, k):
                 counts.append(1)
         # print(f'{bin}\n{counts}')
         new_label.append(bin[counts.index(max(counts))])
-    logging.info('finish filter3d')
+    print('finish filter3d')
     return torch.tensor(new_label)
 if args.k>0:
     point_labels = filter3d(point_xyz, point_labels, args.k)
 end_time = datetime.now()
-logging.info(f'knn finish')
+print(f'knn finish')
 
 vote = {instance: [0 for _ in range(len(args.classes)+1)] for instance in torch.unique(point_labels).tolist()}
 contribute = torch.zeros((point_xyz.shape[0]), dtype=torch.float32, device=point_labels.device, requires_grad=False)

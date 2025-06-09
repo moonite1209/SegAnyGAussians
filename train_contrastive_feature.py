@@ -148,12 +148,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             sampled_ray = torch.rand(H,W).cuda()
             sampled_ray = sampled_ray < ray_sample_rate # bool[h, w]
+            sampled_num = sampled_ray.sum()
 
-            per_pixel_mask_size = sam_masks * sam_masks[:,sampled_ray].count_nonzero(dim=-1)[:,None,None] # mask fill with size, [masks, h, w]
-            background_mask_size = background_mask * background_mask[sampled_ray].count_nonzero(dim=-1)[None,None]
-            per_pixel_mean_mask_size = (per_pixel_mask_size.sum(dim = 0) + background_mask_size) / (sam_masks.sum(dim = 0) + background_mask) # float[h, w]
-            per_sample_mask_size = per_pixel_mean_mask_size[sampled_ray]
-            per_sample_weight = 1 / per_sample_mask_size
+            # per_pixel_mask_size = sam_masks * sam_masks[:,sampled_ray].count_nonzero(dim=-1)[:,None,None] # mask fill with size, [masks, h, w]
+            # background_mask_size = background_mask * background_mask[sampled_ray].count_nonzero(dim=-1)[None,None]
+            # per_pixel_mean_mask_size = (per_pixel_mask_size.sum(dim = 0) + background_mask_size) / (sam_masks.sum(dim = 0) + background_mask) # float[h, w]
+            # per_sample_mask_size = per_pixel_mean_mask_size[sampled_ray]
+            # per_sample_weight = 1 / per_sample_mask_size
 
             # H W
             # per_pixel_mask_size = sam_masks * sam_masks.sum(-1).sum(-1)[:,None,None] # mask fill with size, [masks, h, w]
@@ -171,9 +172,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             
             sam_masks_sample_mask = sam_masks[:, sampled_ray] # bool[masks, sampled pixels]
             background_sample_mask = background_mask[sampled_ray]
+            
+            per_mask_num = sam_masks_sample_mask.sum(dim = -1)
+            per_sample_weight = torch.zeros((sampled_num),device='cuda')
+            for sample_mask, mask_num in zip(sam_masks_sample_mask, per_mask_num):
+                if ~torch.any(sample_mask):
+                    continue
+                per_sample_weight[sample_mask] = 1 / (mask_num)
+            per_sample_weight[background_sample_mask] = 1 / background_sample_mask.sum()
 
-            gt_vec = sam_masks_sample_mask.float() # float[masks, sampled pixels], a pixel belong to a mask
-            gt_corrs = torch.einsum('nh,nj->hj', gt_vec, gt_vec)
+            gt_vec = sam_masks_sample_mask.float().permute(1,0) # float[masks, sampled pixels], a pixel belong to a mask
+            gt_corrs = torch.einsum('ac,bc->ab', gt_vec[~background_sample_mask], gt_vec)
             gt_corrs[gt_corrs != 0] = 1 # float[sampled pixels, sampled pixels], a pixel in the same mask with another pixel
 
         render_pkg = render_contrastive_feature(viewpoint_cam, feature_gaussians, pipe, background_feature)
@@ -185,10 +194,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         norm_loss = (1-rendered_feature_norm)**2 # regularization term, keep aligned on a ray
 
         sampled_features = rendered_features[:,sampled_ray].permute((1,0)) # float[sampled scales, C, sampled pixels]
-        corr = torch.einsum('ac,bc->ab', sampled_features, sampled_features.detach()) # sampled pixel to sampled pixel similarity, float[sampled pixels, sampled pixels]
+        corr = torch.einsum('ac,bc->ab', sampled_features[~background_sample_mask], sampled_features.detach()) # sampled pixel to sampled pixel similarity, float[sampled pixels, sampled pixels]
 
         sampled_mask_positive = gt_corrs == 1 # two sampled pixels belong to different mask in any sampled scales, bool[sampled pixels, sampled pixels]
-        sampled_mask_positive &= ~(background_sample_mask.float()[:,None]@background_sample_mask.float()[None,:]).bool()
         # sampled_mask_positive = torch.triu(sampled_mask_positive, diagonal=1)
 
         sampled_mask_negative = gt_corrs == 0 # two sampled pixels belong to same mask in any sampled scales, bool[sampled pixels, sampled pixels]
@@ -200,8 +208,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         positive_loss = (- corr[sampled_mask_positive]).mean()
         negative_loss = (torch.relu(corr[sampled_mask_negative])).mean()
         comp_loss = torch.zeros_like(corr)
-        comp_loss[sampled_mask_positive] = - 10*corr[sampled_mask_positive]
-        comp_loss[sampled_mask_negative] = torch.relu(corr[sampled_mask_negative])
+        comp_loss[sampled_mask_positive] = - corr[sampled_mask_positive]
+        comp_loss[sampled_mask_negative] = corr[sampled_mask_negative]
         weighted_comp_loss = (comp_loss * per_sample_weight[None,...] * per_mask_weight).sum(dim=-1).mean()
 
         distance_loss = torch.tensor(0.,device='cuda')

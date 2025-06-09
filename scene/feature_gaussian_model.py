@@ -171,10 +171,11 @@ class FeatureGaussianModel(GaussianModel):
         xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
                         np.asarray(plydata.elements[0]["y"]),
                         np.asarray(plydata.elements[0]["z"])),  axis=1)
-        if 'opacity' in plydata.elements[0].properties:
-            opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
-        else:
-            opacities = np.zeros((xyz.shape[0], 1))
+        opacity_name = [p.name for p in plydata.elements[0].properties if p.name == "opacity"]
+        assert len(opacity_name)==1
+        opacities = np.zeros((xyz.shape[0], 1))
+        for idx, attr_name in enumerate(opacity_name):
+            opacities[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
         dc_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_dc_")]
         dc_f_names = sorted(dc_f_names, key = lambda x: int(x.split('_')[-1]))
