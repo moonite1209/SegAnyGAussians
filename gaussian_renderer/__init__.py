@@ -321,10 +321,8 @@ def render_with_depth(viewpoint_camera, pc : GaussianModel, pipe, bg_color : tor
     opacity = pc.get_opacity
     if filtered_mask is not None:
         new_opacity = opacity.detach().clone()
-        new_opacity[filtered_mask, :] = -1.
+        new_opacity[filtered_mask, :] = 0
         opacity = new_opacity
-
-    mask = None
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -357,13 +355,12 @@ def render_with_depth(viewpoint_camera, pc : GaussianModel, pipe, bg_color : tor
 
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, rendered_mask, rendered_depth, radii = rasterizer(
+    rendered_image, rendered_depth, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
         colors_precomp = colors_precomp,
         opacities = opacity,
-        mask = mask,
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
@@ -373,7 +370,6 @@ def render_with_depth(viewpoint_camera, pc : GaussianModel, pipe, bg_color : tor
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
-            "mask": rendered_mask,
             "depth": rendered_depth,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,

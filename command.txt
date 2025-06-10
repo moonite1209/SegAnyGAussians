@@ -99,6 +99,8 @@ python postprocess.py --progress_path $progress_path --sh_degree 0 --feature_dim
 
 # python get_scale.py --progress_path $progress_path --sh_degree 0 --masks_path $masks_path --point_cloud_path $point_cloud_path --sparse_path $sparse_path --images_path $images_path --mask_scales_path $mask_scales_path && \
 
+# python get_depth.py --sh_degree 0 --point_cloud_path $point_cloud_path --sparse_path $sparse_path --images_path $images_path --depth_path $depth_path && \
+
 # python -m pdb render_instance.py --sh_degree 0 --feature_dim 32 --images_path $images_path --sparse_path $sparse_path --masks_path $masks_path --labels_path $labels_path --point_cloud_path $point_cloud_path --contrastive_feature_point_cloud_path $contrastive_feature_point_cloud_path --json_path $json_path --render_path ../${base_path}/render
 
 # python saga_gui.py --sh_degree 0 --feature_pcd_path $contrastive_feature_point_cloud_path --scene_pcd_path $point_cloud_path --json_path $json_path

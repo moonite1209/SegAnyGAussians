@@ -61,8 +61,6 @@ except:
                                 read_intrinsics_text(os.path.join(args.sparse_path, 'cameras.txt')), 
                                 args.images_path)
 camera_list = cameraList_from_camInfos(cameras, 1, args)
-for camera in camera_list:
-    depth = render_with_depth(camera, feat_gs_model, args, bg_color,override_mask=torch.zeros_like(feat_gs_model.get_xyz)[:,0])['depth']
 
 point_features = feat_gs_model.get_instance_features.detach().cpu()
 point_xyz = feat_gs_model.get_xyz.detach().cpu()

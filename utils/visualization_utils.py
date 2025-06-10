@@ -212,12 +212,12 @@ def labels_to_color(labels, colormap='tab20'):
 
     return colors
 
-def intensity_to_color(intensities, colormap='viridis', vmin=None, vmax=None):
+def scalar_to_color(scalars, colormap='viridis', vmin=None, vmax=None):
     """
     将浮点强度值映射为 RGB 颜色。
 
     Args:
-        intensities (torch.Tensor): [N] 浮点数张量。
+        scalars (torch.Tensor): [N] 浮点数张量。
         colormap (str or matplotlib colormap or torch.Tensor): 
             - str: 'viridis', 'plasma', 'hot', 等；
             - matplotlib colormap 对象；
@@ -227,12 +227,12 @@ def intensity_to_color(intensities, colormap='viridis', vmin=None, vmax=None):
     Returns:
         torch.Tensor: [N, 3]，RGB 颜色张量，范围 [0, 1]。
     """
-    if not torch.is_tensor(intensities):
-        raise TypeError("intensities 必须是 torch.Tensor")
-    if intensities.dim() != 1:
-        raise ValueError("intensities 应该是一维")
+    if not torch.is_tensor(scalars):
+        raise TypeError("scalars 必须是 torch.Tensor")
+    if scalars.dim() != 1:
+        raise ValueError("scalars 应该是一维")
 
-    x = intensities.detach().cpu().float().numpy()
+    x = scalars.detach().cpu().float().numpy()
 
     # 归一化
     vmin = x.min() if vmin is None else vmin
@@ -243,8 +243,8 @@ def intensity_to_color(intensities, colormap='viridis', vmin=None, vmax=None):
     # 获取 colormap
     if isinstance(colormap, str):
         cmap = cm.get_cmap(colormap)
-        rgba = cmap(x_norm)[:, :3]  # 丢弃 alpha
-        colors = torch.tensor(rgba, dtype=torch.float32)
+        rgb = cmap(x_norm)[:, :3]  # 丢弃 alpha
+        colors = torch.tensor(rgb, dtype=torch.float32)
     elif isinstance(colormap, torch.Tensor):
         # 自定义颜色渐变，线性插值
         K = colormap.shape[0]
@@ -254,8 +254,8 @@ def intensity_to_color(intensities, colormap='viridis', vmin=None, vmax=None):
         weight = torch.tensor(x_scaled - x_floor.float()).unsqueeze(1)
         colors = (1 - weight) * colormap[x_floor] + weight * colormap[x_ceil]
     elif hasattr(colormap, '__call__'):
-        rgba = colormap(x_norm)[:, :3]
-        colors = torch.tensor(rgba, dtype=torch.float32)
+        rgb = colormap(x_norm)[:, :3]
+        colors = torch.tensor(rgb, dtype=torch.float32)
     else:
         raise ValueError("colormap 类型不支持")
 

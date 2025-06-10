@@ -244,6 +244,77 @@ def test_umap():
     from utils.visualization_utils import features_to_color
     f = torch.rand((4,5))
     print(features_to_color(f))
+
+def test_qwenvl():
+    from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoProcessor
+    from qwen_vl_utils import process_vision_info
+    from transformers import modeling_utils
+    if not hasattr(modeling_utils, "ALL_PARALLEL_STYLES") or modeling_utils.ALL_PARALLEL_STYLES is None:
+        modeling_utils.ALL_PARALLEL_STYLES = ["tp", "none","colwise",'rowwise']
+
+    # default: Load the model on the available device(s)
+    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        "Qwen/Qwen2.5-VL-3B-Instruct", torch_dtype="auto", device_map="auto"
+    )
+
+    # We recommend enabling flash_attention_2 for better acceleration and memory saving, especially in multi-image and video scenarios.
+    # model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+    #     "Qwen/Qwen2.5-VL-3B-Instruct",
+    #     torch_dtype=torch.bfloat16,
+    #     attn_implementation="flash_attention_2",
+    #     device_map="auto",
+    # )
+
+    # default processer
+    processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
+
+    # The default range for the number of visual tokens per image in the model is 4-16384.
+    # You can set min_pixels and max_pixels according to your needs, such as a token range of 256-1280, to balance performance and cost.
+    # min_pixels = 256*28*28
+    # max_pixels = 1280*28*28
+    # processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", min_pixels=min_pixels, max_pixels=max_pixels)
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "image": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
+                },
+                {"type": "text", "text": "Describe this image."},
+            ],
+        }
+    ]
+
+    # Preparation for inference
+    text = processor.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    ) # parse message to ChatML format, type(text) = str
+    image_inputs, video_inputs = process_vision_info(messages) # process images to list of PIL.Image
+    inputs = processor(
+        text=[text],
+        images=image_inputs,
+        videos=video_inputs,
+        padding=True,
+        return_tensors="pt",
+    ) # inputs['input_ids']：表示token的编码，token与text中的字符不是一一对应的，一般token比text中的字符多
+    # inputs['attention_mask']：与inputs['input_ids']长度一致
+    # inputs['pixel_values']：处理后的图像值，例如对于2048*1365的图会输出shape为(14308，1176)的pixel_values，主要是由于经过了缩放、切块patch、展平、动态分辨率处理，由H*W*C变成了patch 数量 * embedding 维度
+    # inputs['image_grid_thw']：用来表示每张图像的[t, h, w]，t表示时间序列的编号，h表示patch-wise的高度，w表示patch-wise的宽度，使得模型可以支持时间序列的图像和不同的、分辨率的图像
+    inputs = inputs.to("cuda")
+
+    # Inference: Generation of the output
+    generated_ids = model.generate(**inputs, max_new_tokens=128) # 回答的token
+    generated_ids_trimmed = [
+        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+    ] # 将输出中包含输入的内容的部分去除，因为是自回归模型所以输出会包含输入
+    output_text = processor.batch_decode(
+        generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+    )
+    print(output_text)
+
+
 def main():
     # pth_to_json()
     # sam_masks_rgb()
@@ -253,7 +324,8 @@ def main():
     # convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/suzongbangongshi/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/suzongbangongshi.ply')
     # convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/juweihui/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/juweihui.ply')
     # convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/hualang/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/hualang.ply')
-    test_umap()
+    # test_umap()
+    test_qwenvl()
 
 if __name__ =='__main__':
     main()
