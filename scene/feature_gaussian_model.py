@@ -31,7 +31,7 @@ class FeatureGaussianModel(GaussianModel):
         self.instance_feature_activation = F.normalize
 
 
-    def __init__(self, sh_degree: int,  instance_feature_dim: int):
+    def __init__(self, sh_degree: int,  instance_feature_dim: int = 0):
         super().__init__(sh_degree)
         self.instance_feature_dim = instance_feature_dim
         self._instance_feature = torch.empty(0)
