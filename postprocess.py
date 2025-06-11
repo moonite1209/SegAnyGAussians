@@ -203,5 +203,3 @@ if(args.clean):
         shutil.rmtree(args.labels_path)
     if os.path.isfile(args.contrastive_feature_point_cloud_path):
         os.remove(args.contrastive_feature_point_cloud_path)
-    if os.path.isfile(args.scale_gate_path):
-        os.remove(args.scale_gate_path)

@@ -105,4 +105,4 @@ python postprocess.py --progress_path $progress_path --sh_degree 0 --feature_dim
 
 # python saga_gui.py --sh_degree 0 --feature_pcd_path $contrastive_feature_point_cloud_path --scene_pcd_path $point_cloud_path --json_path $json_path
 
-# zip -r SegAnyGAussians.zip . -x './data/**' './output/**' './third_party/**' './weights/**'
+# zip -r SegAnyGAussians.zip . -x './data/**' './output/**' './weights/**'

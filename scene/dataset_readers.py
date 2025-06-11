@@ -31,7 +31,6 @@ class CameraInfo(NamedTuple):
     FovY: np.array
     FovX: np.array
     image: np.array
-    features: torch.tensor
     masks: torch.tensor
     image_path: str
     image_name: str
@@ -90,15 +89,22 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, features_fo
 
         if intr.model=="SIMPLE_PINHOLE":
             focal_length_x = intr.params[0]
+            cx = intr.params[1]
+            cy = intr.params[2]
             FovY = focal2fov(focal_length_x, height)
             FovX = focal2fov(focal_length_x, width)
         elif intr.model=="PINHOLE":
             focal_length_x = intr.params[0]
             focal_length_y = intr.params[1]
+            cx = intr.params[2]
+            cy = intr.params[3]
             FovY = focal2fov(focal_length_y, height)
             FovX = focal2fov(focal_length_x, width)
         elif intr.model == "SIMPLE_RADIAL":
             focal_length = intr.params[0]
+            cx = intr.params[1]
+            cy = intr.params[2]
+            k = intr.params[3]
             FovY = focal2fov(focal_length, height)
             FovX = focal2fov(focal_length, width)
         else:
@@ -110,10 +116,6 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, features_fo
             if images_folder and os.path.exists(os.path.join(images_folder, extr.name)) \
                 else None
 
-        features = torch.load(os.path.join(features_folder, image_name_noext + ".pt"), weights_only=True) \
-            if features_folder and os.path.exists(os.path.join(features_folder, image_name_noext + ".pt")) \
-                else None
-        
         masks = torch.load(os.path.join(masks_folder, image_name_noext + ".pt"), weights_only=True) \
             if masks_folder and os.path.exists(os.path.join(masks_folder, image_name_noext + ".pt")) \
                 else None
@@ -122,8 +124,8 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, features_fo
         #     if masks_folder and os.path.exists(os.path.join(masks_folder, image_name_noext + ".pt")) \
         #         else None
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, features=features, masks=masks,
-                            image_path=os.path.join(images_folder, extr.name), image_name=image_name_noext, width=width, height=height, cx=intr.params[2] if len(intr.params) > 3 and allow_principle_point_shift else None, cy=intr.params[3] if len(intr.params) >3 and allow_principle_point_shift else None)
+        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, masks=masks,
+                            image_path=os.path.join(images_folder, extr.name), image_name=image_name_noext, width=width, height=height, cx=cx, cy=cy)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -289,7 +291,7 @@ def readCamerasFromLerfTransforms(path, transformsfile, white_background, extens
             FovX = fovx
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], features = None, masks = None, mask_scales = None))
+                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], masks = None))
             
     return cam_infos
 
