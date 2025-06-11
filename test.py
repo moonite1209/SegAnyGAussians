@@ -282,7 +282,7 @@ def test_qwenvl():
                     "type": "image",
                     "image": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
                 },
-                {"type": "text", "text": "Describe this image."},
+                {"type": "text", "text": "Please first output bbox coordinates and names of every item in this image in JSON format, and then answer how many items are there in the image."},
             ],
         }
     ]
