@@ -141,7 +141,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # N_mask, H, W
             sam_masks = viewpoint_cam.original_masks.cuda() # float[masks, h, w]
             N,H,W = sam_masks.shape
-            viewpoint_cam.feature_height, viewpoint_cam.feature_width = viewpoint_cam.image_height, viewpoint_cam.image_width
             background_mask = (sam_masks.sum(dim = 0) == 0)
 
         render_pkg = render_contrastive_feature(viewpoint_cam, feature_gaussians, pipe, background_feature)
