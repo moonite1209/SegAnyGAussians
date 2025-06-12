@@ -140,6 +140,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         with torch.no_grad():
             # N_mask, H, W
             sam_masks = viewpoint_cam.original_masks.cuda() # float[masks, h, w]
+            N,H,W = sam_masks.shape
             viewpoint_cam.feature_height, viewpoint_cam.feature_width = viewpoint_cam.image_height, viewpoint_cam.image_width
             background_mask = (sam_masks.sum(dim = 0) == 0)
 
@@ -157,12 +158,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         backgroud_feature = F.normalize(rendered_features[background_mask].mean(dim=0), dim=-1)
         intra_loss = []
         for sam_mask, mask_feature in zip(sam_masks, mask_features, strict=True):
-            intra_loss.append((-(rendered_features[sam_mask]@mask_feature[None].permute(1,0).detach())).mean())
+            intra_loss.append((-torch.einsum('ac,bc->ab', rendered_features[sam_mask], mask_feature[None].detach())).mean())
         intra_loss = torch.stack(intra_loss).mean()
 
         inter_mask_sim = torch.einsum('ac, bc -> ab', mask_features, torch.cat((mask_features, backgroud_feature[None])).detach())
-        inter_loss_mask = torch.cat((~torch.eye(mask_features.shape[0],dtype=torch.bool,device=inter_mask_sim.device),torch.ones(mask_features.shape[0],dtype=torch.bool,device=inter_mask_sim.device)[:,None]),dim=-1)
-        inter_loss = (torch.clamp(inter_mask_sim,-0.5)*inter_loss_mask).sum(-1).mean()
+        inter_loss_weight = (1/N)*torch.cat((~torch.eye(mask_features.shape[0],dtype=torch.bool,device=inter_mask_sim.device),torch.ones(mask_features.shape[0],dtype=torch.bool,device=inter_mask_sim.device)[:,None]),dim=-1)
+        inter_loss = (torch.clamp(inter_mask_sim,-0.5)*inter_loss_weight).sum(-1).mean()
 
         distance_loss = torch.tensor(0.,device='cuda')
         # min_val = torch.min(feature_gaussians.get_xyz, dim=0).values

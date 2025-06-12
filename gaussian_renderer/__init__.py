@@ -222,8 +222,8 @@ def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
     raster_settings = GaussianRasterizationSettingsContrastiveF(
-        image_height=int(viewpoint_camera.feature_height),
-        image_width=int(viewpoint_camera.feature_width),
+        image_height=int(viewpoint_camera.image_height),
+        image_width=int(viewpoint_camera.image_width),
         tanfovx=tanfovx,
         tanfovy=tanfovy,
         bg=bg_color,
