@@ -141,7 +141,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # N_mask, H, W
             sam_masks = viewpoint_cam.original_masks.cuda() # float[masks, h, w]
             N,H,W = sam_masks.shape
-            viewpoint_cam.feature_height, viewpoint_cam.feature_width = viewpoint_cam.image_height, viewpoint_cam.image_width
 
             background_mask = ~sam_masks.any(dim=0)
             ray_sample_rate = opt.ray_sample_rate if opt.ray_sample_rate > 0 else torch.clamp(torch.tensor(opt.num_sampled_rays / sam_masks[0].numel()), 0, 1)

@@ -525,7 +525,6 @@ class GaussianSplattingGUI:
             image_name=None,
             uid=0,
         )
-        cam.feature_height, cam.feature_width = self.height, self.width
         return cam
     
     def cluster_in_3D(self):
