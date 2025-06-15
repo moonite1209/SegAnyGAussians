@@ -203,7 +203,7 @@ from diff_gaussian_rasterization_contrastive_f import GaussianRasterizationSetti
 from diff_gaussian_rasterization_contrastive_f import GaussianRasterizer as GaussianRasterizerContrastiveF
 from scene.feature_gaussian_model import FeatureGaussianModel
 
-def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0):
+def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, depth: torch.Tensor = None):
     """
     Render the scene. 
     
@@ -233,7 +233,8 @@ def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
-        debug=pipe.debug
+        debug=pipe.debug,
+        depth = depth
     )
 
     rasterizer = GaussianRasterizerContrastiveF(raster_settings=raster_settings)
@@ -267,7 +268,8 @@ def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe
         opacities = opacity,
         scales = scales,
         rotations = rotations,
-        cov3D_precomp = cov3D_precomp)
+        cov3D_precomp = cov3D_precomp,
+        std = pc.get_std)
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
@@ -277,7 +279,7 @@ def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe
             "radii": radii}
 
 from diff_gaussian_rasterization_depth import GaussianRasterizationSettings as GaussianRasterizationSettingsDepth, GaussianRasterizer as GaussianRasterizerDepth
-def render_with_depth(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, override_mask = None, filtered_mask = None):
+def render_with_depth(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, filtered_mask = None):
     """
     Render the scene. 
     

@@ -76,8 +76,12 @@ class FeatureGaussianModel(GaussianModel):
     def get_instance_features(self):
         return self.instance_feature_activation(self._instance_feature)
     
+    @property
+    def get_std(self):
+        return torch.abs(self._std)
+    
     def parameters(self):
-        return [*super().parameters(), self._instance_feature]
+        return [*super().parameters(), self._instance_feature, self._std]
 
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
@@ -119,7 +123,8 @@ class FeatureGaussianModel(GaussianModel):
             {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
-            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
+            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
+            {'params': [self._std], 'lr': training_args.std_lr, "name": "std"}
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
@@ -219,6 +224,7 @@ class FeatureGaussianModel(GaussianModel):
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda"))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda"))
         self._instance_feature = nn.Parameter(torch.tensor(instance_feature, dtype=torch.float, device="cuda").contiguous())
+        self._std = nn.Parameter(torch.tensor((1.0), dtype=torch.float, device="cuda"))
 
         self.active_sh_degree = self.max_sh_degree
 

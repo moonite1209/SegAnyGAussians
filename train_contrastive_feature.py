@@ -12,7 +12,7 @@
 import os
 import torch
 from random import randint
-from gaussian_renderer import render, render_contrastive_feature, render_with_max_contributor
+from gaussian_renderer import render, render_contrastive_feature, render_with_depth, render_with_max_contributor
 import sys
 from scene import FeatureScene, FeatureGaussianModel
 from utils.general_utils import safe_state
@@ -112,11 +112,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     feature_gaussians.load_ply(dataset.point_cloud_path)
     feature_gaussians.training_setup(opt)
     feature_gaussians.eval()
-    feature_gaussians._instance_feature.requires_grad = True
+    feature_gaussians._instance_feature.requires_grad_()
+    feature_gaussians._std.requires_grad_()
 
     scene = FeatureScene(dataset, feature_gaussians, shuffle=False, sample_rate=1.0)
 
-    background = torch.ones([3], dtype=torch.float32, device="cuda") if dataset.white_background else torch.zeros([3], dtype=torch.float32, device="cuda")
+    background = torch.tensor((1,1,1) if dataset.white_background else (0,0,0), dtype=torch.float32, device="cuda")
     background_feature = torch.zeros([dataset.feature_dim], dtype=torch.float32, device="cuda")
 
     iter_start = torch.cuda.Event(enable_timing = True)
@@ -148,26 +149,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             sampled_ray = torch.rand(H,W).cuda()
             sampled_ray = sampled_ray < ray_sample_rate # bool[h, w]
             sampled_num = sampled_ray.sum()
-
-            # per_pixel_mask_size = sam_masks * sam_masks[:,sampled_ray].count_nonzero(dim=-1)[:,None,None] # mask fill with size, [masks, h, w]
-            # background_mask_size = background_mask * background_mask[sampled_ray].count_nonzero(dim=-1)[None,None]
-            # per_pixel_mean_mask_size = (per_pixel_mask_size.sum(dim = 0) + background_mask_size) / (sam_masks.sum(dim = 0) + background_mask) # float[h, w]
-            # per_sample_mask_size = per_pixel_mean_mask_size[sampled_ray]
-            # per_sample_weight = 1 / per_sample_mask_size
-
-            # H W
-            # per_pixel_mask_size = sam_masks * sam_masks.sum(-1).sum(-1)[:,None,None] # mask fill with size, [masks, h, w]
-
-            # per_pixel_mean_mask_size = per_pixel_mask_size.sum(dim = 0) / (sam_masks.sum(dim = 0) + 1e-9) # float[h, w]
-
-            # per_pixel_mean_mask_size = per_pixel_mean_mask_size[sampled_ray] # sampled pixel mean mask size, float[sampled pixels]
-
-
-            # pixel_to_pixel_mask_size = per_pixel_mean_mask_size.unsqueeze(0) * per_pixel_mean_mask_size.unsqueeze(1) # float[1, sampled pixels] * float[sampled pixels, 1] -> float[sampled pixels, sampled pixels]
-            # ptp_max_size = pixel_to_pixel_mask_size.max()
-            # pixel_to_pixel_mask_size[pixel_to_pixel_mask_size == 0] = 1e10
-            # per_pixel_weight = torch.clamp(ptp_max_size / pixel_to_pixel_mask_size, 1.0, None)
-            # per_pixel_weight = (per_pixel_weight - per_pixel_weight.min()) / (per_pixel_weight.max() - per_pixel_weight.min() + 1e-9) * 9. + 1. # pixel的平均mask size越大其权重越小, float[sampled pixels, sampled pixels]
             
             sam_masks_sample_mask = sam_masks[:, sampled_ray] # bool[masks, sampled pixels]
             background_sample_mask = background_mask[sampled_ray]
@@ -184,8 +165,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gt_corrs = torch.einsum('ac,bc->ab', gt_vec[~background_sample_mask], gt_vec)
             gt_corrs[gt_corrs != 0] = 1 # float[sampled pixels, sampled pixels], a pixel in the same mask with another pixel
 
-        render_pkg = render_contrastive_feature(viewpoint_cam, feature_gaussians, pipe, background_feature)
-        max_contributor = render_with_max_contributor(viewpoint_cam, feature_gaussians, pipe, background, override_color=torch.zeros(feature_gaussians.get_xyz.shape[0],3,dtype=torch.float,device='cuda'))['max_contributor']
+        depth = render_with_depth(viewpoint_cam, feature_gaussians, pipe, background)['depth'].detach()
+        render_pkg = render_contrastive_feature(viewpoint_cam, feature_gaussians, pipe, background_feature, depth=depth)
         rendered_features = render_pkg["render"]
         visibility_filter = render_pkg["visibility_filter"]
 
@@ -283,7 +264,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         training_report(tb_writer, testing_iterations, scene, 
                         iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_start.elapsed_time(iter_end), 
                         get_render_image = lambda viewpoint: render(viewpoint, feature_gaussians, pipe, background)['render'].detach(), 
-                        get_feature_map = lambda viewpoint: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature)['render'].detach())
+                        get_feature_map = lambda viewpoint: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature, depth=depth)['render'].detach())
 
         feature_gaussians.optimizer.step()
         feature_gaussians.optimizer.zero_grad()

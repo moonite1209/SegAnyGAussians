@@ -273,6 +273,9 @@ renderCUDA(
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
+	const float* __restrict__ depths,
+	const float* __restrict__ depth,
+	const float* __restrict__ std,
 	float* __restrict__ out_color)
 {
 	// Identify current tile and associated min/max pixel range.
@@ -304,6 +307,8 @@ renderCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
+	const float mean = depth[pix_id];
+	const float std_value = *std;
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -339,11 +344,12 @@ renderCUDA(
 			if (power > 0.0f)
 				continue;
 
+			const float depth_weight = exp(-(depths[collected_id[j]] - mean)*(depths[collected_id[j]] - mean) / (2 * std_value * std_value));
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
 			// Avoid numerical instabilities (see paper appendix). 
-			float alpha = min(0.99f, con_o.w * exp(power));
+			float alpha = min(0.99f, con_o.w * exp(power) * depth_weight);
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
@@ -354,6 +360,7 @@ renderCUDA(
 				continue;
 			}
 
+			
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
@@ -395,6 +402,9 @@ void FORWARD::render(
 	float* final_T,
 	uint32_t* n_contrib,
 	const float* bg_color,
+	const float* depths,
+	const float* depth,
+	const float* std,
 	float* out_color)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
@@ -407,6 +417,9 @@ void FORWARD::render(
 		final_T,
 		n_contrib,
 		bg_color,
+		depths,
+		depth,
+		std,
 		out_color);
 }
 
