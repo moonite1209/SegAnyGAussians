@@ -35,7 +35,7 @@ import pytorch3d.ops
 
 import time
 
-from utils.visualization_utils import feature_map_to_image, features_to_color
+from utils.visualization_utils import feature_map_to_image, features_to_color, scalar_to_color
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -264,7 +264,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         training_report(tb_writer, testing_iterations, scene, 
                         iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_start.elapsed_time(iter_end), 
                         get_render_image = lambda viewpoint: render(viewpoint, feature_gaussians, pipe, background)['render'].detach(), 
-                        get_feature_map = lambda viewpoint: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature, depth=depth)['render'].detach())
+                        get_feature_map = lambda viewpoint: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature, depth=depth)['render'].detach(),
+                        get_depth_map = lambda viewpoint: render_with_depth(viewpoint, feature_gaussians, pipe, background)['depth'].detach())
 
         feature_gaussians.optimizer.step()
         feature_gaussians.optimizer.zero_grad()
@@ -280,9 +281,10 @@ def prepare_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_time, get_render_image, get_feature_map):
+def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_time, get_render_image, get_feature_map, get_depth_map):
     if tb_writer is None:
         return
+    gaussians = scene.feature_gaussians
     if tb_writer:
         tb_writer.add_scalar('train_loss/loss', loss.item(), iteration)
         tb_writer.add_scalar('train_loss/positive_loss', positive_loss.item(), iteration)
@@ -291,8 +293,9 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
         tb_writer.add_scalar('train_loss/distance_loss', distance_loss.item(), iteration)
         tb_writer.add_scalar('train_loss/outview_loss', outview_loss.item(), iteration)
         tb_writer.add_scalar('iter_time', iter_time, iteration)
-        tb_writer.add_scalar('grad/norm/mean', scene.feature_gaussians._instance_feature.grad.norm(dim=-1).mean(), iteration)
-        tb_writer.add_scalar('grad/norm/std', scene.feature_gaussians._instance_feature.grad.norm(dim=-1).std(), iteration)
+        tb_writer.add_scalar('scene/std', gaussians.get_std, iteration)
+        tb_writer.add_scalar('grad/norm/mean', gaussians._instance_feature.grad.norm(dim=-1).mean(), iteration)
+        tb_writer.add_scalar('grad/norm/std', gaussians._instance_feature.grad.norm(dim=-1).std(), iteration)
 
     # Report test and samples of training set
     if iteration in testing_iterations:
@@ -310,6 +313,7 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     mask_map = get_mask_map(viewpoint.original_masks).permute(2,0,1)
                     feature_map = get_feature_map(viewpoint)
+                    depth_map = get_depth_map(viewpoint)
                     C,H,W = feature_map.shape
                     if tb_writer:
                         tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/image/render", image[None], global_step=iteration)
@@ -317,6 +321,7 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/image/ground_truth", gt_image[None], global_step=iteration)
                             tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/feature/ground_truth", mask_map[None], global_step=iteration)
+                            tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/depth/ground_truth", scalar_to_color(depth_map[0].flatten()).permute(1,0).reshape(3,H,W)[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
@@ -327,9 +332,9 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
                     tb_writer.add_scalar(f"{config['name']}/loss_viewpoint - psnr", psnr_test, iteration)
 
         if tb_writer:
-            tb_writer.add_histogram("scene/opacity_histogram", scene.feature_gaussians.get_opacity, iteration)
-            tb_writer.add_scalar('total_points', scene.feature_gaussians.get_xyz.shape[0], iteration)
-            tb_writer.add_mesh(f'point_features', scene.feature_gaussians.get_xyz[None], colors=features_to_color(scene.feature_gaussians.get_instance_features)[None]*255, global_step=iteration)
+            tb_writer.add_histogram("scene/opacity_histogram", gaussians.get_opacity, iteration)
+            tb_writer.add_scalar('total_points', gaussians.get_xyz.shape[0], iteration)
+            tb_writer.add_mesh(f'point_features', gaussians.get_xyz[None], colors=features_to_color(scene.feature_gaussians.get_instance_features)[None]*255, global_step=iteration)
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
