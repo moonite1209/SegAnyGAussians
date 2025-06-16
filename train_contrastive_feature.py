@@ -113,7 +113,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     feature_gaussians.training_setup(opt)
     feature_gaussians.eval()
     feature_gaussians._instance_feature.requires_grad_()
-    feature_gaussians._std.requires_grad_()
+    # feature_gaussians._std.requires_grad_()
 
     scene = FeatureScene(dataset, feature_gaussians, shuffle=False, sample_rate=1.0)
 
@@ -264,7 +264,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         training_report(tb_writer, testing_iterations, scene, 
                         iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_start.elapsed_time(iter_end), 
                         get_render_image = lambda viewpoint: render(viewpoint, feature_gaussians, pipe, background)['render'].detach(), 
-                        get_feature_map = lambda viewpoint: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature, depth=depth)['render'].detach(),
+                        get_feature_map = lambda viewpoint, depth: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature, depth=depth)['render'].detach(),
                         get_depth_map = lambda viewpoint: render_with_depth(viewpoint, feature_gaussians, pipe, background)['depth'].detach())
 
         feature_gaussians.optimizer.step()
@@ -312,8 +312,8 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
                     image = get_render_image(viewpoint)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     mask_map = get_mask_map(viewpoint.original_masks).permute(2,0,1)
-                    feature_map = get_feature_map(viewpoint)
                     depth_map = get_depth_map(viewpoint)
+                    feature_map = get_feature_map(viewpoint, depth_map)
                     C,H,W = feature_map.shape
                     if tb_writer:
                         tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/image/render", image[None], global_step=iteration)
