@@ -234,7 +234,7 @@ def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=pipe.debug,
-        depth = depth
+        depth = render_with_depth(viewpoint_camera, pc, pipe)['depth'].detach()
     )
 
     rasterizer = GaussianRasterizerContrastiveF(raster_settings=raster_settings)
@@ -279,7 +279,7 @@ def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe
             "radii": radii}
 
 from diff_gaussian_rasterization_depth import GaussianRasterizationSettings as GaussianRasterizationSettingsDepth, GaussianRasterizer as GaussianRasterizerDepth
-def render_with_depth(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, filtered_mask = None):
+def render_with_depth(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor = torch.tensor([0,0,0],dtype=torch.float,device='cuda'), scaling_modifier = 1.0, override_color = None, filtered_mask = None):
     """
     Render the scene. 
     

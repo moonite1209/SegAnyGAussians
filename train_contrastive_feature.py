@@ -165,8 +165,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gt_corrs = torch.einsum('ac,bc->ab', gt_vec[~background_sample_mask], gt_vec)
             gt_corrs[gt_corrs != 0] = 1 # float[sampled pixels, sampled pixels], a pixel in the same mask with another pixel
 
-        depth = render_with_depth(viewpoint_cam, feature_gaussians, pipe, background)['depth'].detach()
-        render_pkg = render_contrastive_feature(viewpoint_cam, feature_gaussians, pipe, background_feature, depth=depth)
+        render_pkg = render_contrastive_feature(viewpoint_cam, feature_gaussians, pipe, background_feature)
         rendered_features = render_pkg["render"]
         visibility_filter = render_pkg["visibility_filter"]
 
@@ -264,7 +263,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         training_report(tb_writer, testing_iterations, scene, 
                         iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_start.elapsed_time(iter_end), 
                         get_render_image = lambda viewpoint: render(viewpoint, feature_gaussians, pipe, background)['render'].detach(), 
-                        get_feature_map = lambda viewpoint, depth: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature, depth=depth)['render'].detach(),
+                        get_feature_map = lambda viewpoint: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature)['render'].detach(),
                         get_depth_map = lambda viewpoint: render_with_depth(viewpoint, feature_gaussians, pipe, background)['depth'].detach())
 
         feature_gaussians.optimizer.step()
@@ -313,7 +312,7 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     mask_map = get_mask_map(viewpoint.original_masks).permute(2,0,1)
                     depth_map = get_depth_map(viewpoint)
-                    feature_map = get_feature_map(viewpoint, depth_map)
+                    feature_map = get_feature_map(viewpoint)
                     C,H,W = feature_map.shape
                     if tb_writer:
                         tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/image/render", image[None], global_step=iteration)
