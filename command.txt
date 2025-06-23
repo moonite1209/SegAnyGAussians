@@ -69,6 +69,26 @@ json_path：输出的json结果文件路径，必要参数
 
 
 
+base_path="data/lerf_ovs/waldo_kitchen"
+model_path="output/lerf_ovs/waldo_kitchen"
+images_path="${base_path}/images/"
+sparse_path="${base_path}/sparse/0/"
+point_cloud_path="${model_path}/point_cloud/iteration_30000/point_cloud.ply"
+
+masks_path="${base_path}/masks"
+labels_path="${base_path}/labels"
+annotated_images_path="${base_path}/rgb_masks"
+
+contrastive_feature_point_cloud_path="${base_path}/contrastive_feature_point_cloud.ply"
+
+json_path="${base_path}/output.json"
+progress_path="${base_path}/progress"
+log_path="${base_path}"
+
+sam_checkpoint_path="weights/sam_vit_h_4b8939.pth"
+groundingdino_checkpoint_path="weights/groundingdino_swint_ogc.pth"
+groundingdino_config_path="weights/GroundingDINO_SwinT_OGC.py"
+
 base_path="data/temp/suzongbangongshi"
 images_path="${base_path}/fastRecon/dense/sparse/0/images/"
 sparse_path="${base_path}/fastRecon/dense/sparse/0/"
@@ -78,10 +98,7 @@ masks_path="${base_path}/masks"
 labels_path="${base_path}/labels"
 annotated_images_path="${base_path}/rgb_masks"
 
-mask_scales_path="${base_path}/mask_scales"
-
 contrastive_feature_point_cloud_path="${base_path}/contrastive_feature_point_cloud.ply"
-scale_gate_path="${base_path}/scale_gate.pt"
 
 json_path="${base_path}/output.json"
 progress_path="${base_path}/progress"
@@ -90,6 +107,8 @@ log_path="${base_path}"
 sam_checkpoint_path="weights/sam_vit_h_4b8939.pth"
 groundingdino_checkpoint_path="weights/groundingdino_swint_ogc.pth"
 groundingdino_config_path="weights/GroundingDINO_SwinT_OGC.py"
+
+python train_scene.py --model_path $model_path --images_path $images_path --sparse_path $sparse_path --data_device cpu && \
 
 python grounded_SAM_masks.py --progress_path $progress_path --images_path $images_path --masks_path $masks_path --labels_path $labels_path --sam_checkpoint_path $sam_checkpoint_path --groundingdino_checkpoint_path $groundingdino_checkpoint_path --groundingdino_config_path $groundingdino_config_path --downsample 1 --annotated_images_path $annotated_images_path && \
 

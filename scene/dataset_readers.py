@@ -69,7 +69,7 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, features_folder = None, masks_folder = None, sample_rate = 1.0, allow_principle_point_shift = False):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folder = None, sample_rate = 1.0):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         if idx % 10 >= sample_rate * 10:
@@ -157,7 +157,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8, sample_rate = 1.0, allow_principle_point_shift = False, args=None):
+def readColmapSceneInfo(path, images, eval, llffhold=8, sample_rate = 1.0, args=None):
     try:
         cameras_extrinsic_file = os.path.join(path, "images.bin")
         cameras_intrinsic_file = os.path.join(path, "cameras.bin")
@@ -169,7 +169,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, sample_rate = 1.0, allow
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=args.images_path, features_folder=args.features_path, masks_folder=args.masks_path, sample_rate=sample_rate, allow_principle_point_shift = allow_principle_point_shift)
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=args.images_path, masks_folder=args.masks_path, sample_rate=sample_rate)
 
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 

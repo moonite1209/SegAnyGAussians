@@ -13,6 +13,7 @@ import os
 import torch
 from random import randint
 import numpy as np
+from scene.dataset_readers import fetchPly
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
@@ -37,6 +38,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
+    gaussians.create_from_pcd(fetchPly(os.path.join(dataset.model_path, 'input.ply')), scene.cameras_extent)
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint, weights_only=True)
@@ -48,11 +50,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    iterations = opt.iterations
+    if not opt.iterations:
+        iterations = 30000
     viewpoint_stack = None
     ema_loss_for_log = 0.0
-    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
+    progress_bar = tqdm(range(first_iter, iterations), desc="Training progress")
     first_iter += 1
-    for iteration in range(first_iter, opt.iterations + 1):        
+    for iteration in range(first_iter, iterations + 1):        
         if network_gui.conn == None:
             network_gui.try_connect()
         while network_gui.conn != None:
@@ -63,7 +68,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
                     net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                 network_gui.send(net_image_bytes, dataset.source_path)
-                if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
+                if do_training and ((iteration < int(iterations)) or not keep_alive):
                     break
             except Exception as e:
                 network_gui.conn = None
@@ -85,19 +90,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if (iteration - 1) == debug_from:
             pipe.debug = True
 
-        # start_time = time.time()
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        # print("render time", time.time() - start_time)
 
         # Loss
         
         gt_image = viewpoint_cam.original_image.cuda()
-        # gt_mask = gt_image.sum(dim = 0)[None,:,:]
-        # gt_mask[gt_mask != 0] = 1
-
-        # mask_loss = - ((gt_mask * mask).sum() + 0.15 * ((1-gt_mask) * mask).sum())
-
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         # loss = mask_loss
@@ -111,14 +109,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration % 10 == 0:
                 progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
                 progress_bar.update(10)
-            if iteration == opt.iterations:
+            if iteration == iterations:
                 progress_bar.close()
 
             # Log and save
-            # training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
-                scene.save(iteration)
+                gaussians.save_ply(os.path.join(dataset.model_path, f'point_cloud/iteration_{iteration}', "point_cloud.ply"))
 
             # Densification
             if iteration < opt.densify_until_iter:
@@ -134,7 +132,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     gaussians.reset_opacity()
 
             # Optimizer step
-            if iteration < opt.iterations:
+            if iteration < iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
@@ -211,7 +209,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=np.random.randint(10000, 20000))
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1, 1_000, 2_000, 5_000, 10_000, 20_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])

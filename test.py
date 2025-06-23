@@ -315,6 +315,46 @@ def test_qwenvl():
     print(output_text)
 
 
+def cost_volume(left_feature, right_feature):
+    feature_similarity = 'difference'
+    max_disp = 192
+    b, c, h, w = left_feature.size()
+
+    if feature_similarity == 'difference':
+        cost_volume = left_feature.new_zeros(b, c, max_disp, h, w)
+
+        for i in range(max_disp):
+            if i > 0:
+                cost_volume[:, :, i, :, i:] = left_feature[:, :, :, i:] - right_feature[:, :, :, :-i]
+            else:
+                cost_volume[:, :, i, :, :] = left_feature - right_feature
+
+    elif feature_similarity == 'concat':
+        cost_volume = left_feature.new_zeros(b, 2 * c, max_disp, h, w)
+        for i in range(max_disp):
+            if i > 0:
+                cost_volume[:, :, i, :, i:] = torch.cat((left_feature[:, :, :, i:], right_feature[:, :, :, :-i]),
+                                                        dim=1)
+            else:
+                cost_volume[:, :, i, :, :] = torch.cat((left_feature, right_feature), dim=1)
+
+    elif feature_similarity == 'correlation':
+        cost_volume = left_feature.new_zeros(b, max_disp, h, w)
+
+        for i in range(max_disp):
+            if i > 0:
+                cost_volume[:, i, :, i:] = (left_feature[:, :, :, i:] *
+                                            right_feature[:, :, :, :-i]).mean(dim=1)
+            else:
+                cost_volume[:, i, :, :] = (left_feature * right_feature).mean(dim=1)
+
+    else:
+        raise NotImplementedError
+
+    cost_volume = cost_volume.contiguous()  # [B, C, D, H, W] or [B, D, H, W]
+
+    return cost_volume
+
 def main():
     # pth_to_json()
     # sam_masks_rgb()
@@ -325,7 +365,8 @@ def main():
     # convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/juweihui/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/juweihui.ply')
     # convert_gs_to_splm('/home/moonite/code/SegAnyGAussians/data/temp/hualang/output_models/point_cloud/iteration_30000/point_cloud.ply', '/home/moonite/code/SpatialLM/pcd/hualang.ply')
     # test_umap()
-    test_qwenvl()
+    # test_qwenvl()
+    cost_volume(torch.randn(1, 3, 256, 256), torch.randn(1, 3, 256, 256))
 
 if __name__ =='__main__':
     main()
