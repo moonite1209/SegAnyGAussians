@@ -26,16 +26,17 @@ from scene.gaussian_model import BasicPointCloud
 
 class CameraInfo(NamedTuple):
     uid: int
-    R: np.array
-    T: np.array
-    FovY: np.array
-    FovX: np.array
-    image: np.array
-    masks: torch.tensor
+    R: np.ndarray
+    T: np.ndarray
+    FovY: np.ndarray
+    FovX: np.ndarray
+    # image: np.ndarray
+    # masks: torch.Tensor
     image_path: str
     image_name: str
     width: int
     height: int
+    masks_path: str
     cx: float = None
     cy: float = None
 
@@ -112,20 +113,21 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folde
 
         image_name_noext = os.path.splitext(extr.name)[0]
         
-        image = Image.open(os.path.join(images_folder, extr.name)) \
-            if images_folder and os.path.exists(os.path.join(images_folder, extr.name)) \
-                else None
-
-        masks = torch.load(os.path.join(masks_folder, image_name_noext + ".pt"), weights_only=True) \
-            if masks_folder and os.path.exists(os.path.join(masks_folder, image_name_noext + ".pt")) \
-                else None
-        
+        # image = Image.open(os.path.join(images_folder, extr.name)) \
+        #     if images_folder and os.path.exists(os.path.join(images_folder, extr.name)) \
+        #         else None
+        image_path = os.path.join(images_folder, extr.name)
+        # masks = torch.load(os.path.join(masks_folder, image_name_noext + ".pt"), weights_only=True) \
+        #     if masks_folder and os.path.exists(os.path.join(masks_folder, image_name_noext + ".pt")) \
+        #         else None
+        masks_path = os.path.join(masks_folder, image_name_noext + ".pt") \
+            if masks_folder else None
         # masks = os.path.join(masks_folder, image_name_noext + ".pt") \
         #     if masks_folder and os.path.exists(os.path.join(masks_folder, image_name_noext + ".pt")) \
         #         else None
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, masks=masks,
-                            image_path=os.path.join(images_folder, extr.name), image_name=image_name_noext, width=width, height=height, cx=cx, cy=cy)
+        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image_path=image_path, masks_path=masks_path,
+                            image_name=image_name_noext, width=width, height=height, cx=cx, cy=cy)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos

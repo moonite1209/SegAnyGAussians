@@ -12,12 +12,14 @@
 import os
 import random
 import json
+from scene.dataset import CameraDataset
 from utils.system_utils import searchForMaxIteration
 from scene.dataset_readers import sceneLoadTypeCallbacks, fetchPly
 from scene.gaussian_model import GaussianModel
 from scene.feature_gaussian_model import FeatureGaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+from copy import deepcopy
 
 class Scene:
 
@@ -88,7 +90,7 @@ class FeatureScene:
         """b
         :param path: Path to colmap scene main folder.
         """
-        self.model_path = args.model_path
+        self.args = args
         self.feature_gaussians = feature_gaussians
             
         self.train_cameras = {}
@@ -103,21 +105,27 @@ class FeatureScene:
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
         else:
             assert False, "Could not recognize scene type!"
-
+        self.scene_info = scene_info
         if shuffle:
-            random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
-            random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
+            train_camera_infos = random.shuffle(deepcopy(scene_info.train_cameras))  # Multi-res consistent random shuffling
+            test_camera_infos = random.shuffle(deepcopy(scene_info.test_cameras))  # Multi-res consistent random shuffling
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
-            self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
+            self.train_cameras[resolution_scale] = cameraList_from_camInfos(train_camera_infos, resolution_scale, args)
             print("Loading Test Cameras")
-            self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
+            self.test_cameras[resolution_scale] = cameraList_from_camInfos(test_camera_infos, resolution_scale, args)
 
     def getTrainCameras(self, scale=1.0):
         return self.train_cameras[scale]
 
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
+    
+    def getTrainDataset(self, scale=1.0):
+        return CameraDataset(self.args, self.scene_info.train_cameras, scale)
+    
+    def getTestDataset(self, scale=1.0):
+        return CameraDataset(self.args, self.scene_info.test_cameras, scale)
