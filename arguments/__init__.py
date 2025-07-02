@@ -114,7 +114,9 @@ class OptimizationParams(ParamGroup):
         self.lamb = 0.3
 
         # Training features
+        self.epochs = 10
         self.ray_sample_rate = 0.0
+        self.sample_rate = 0.002
         self.num_sampled_rays = -1
         self.smooth_K = 16
         self.scale_aware_dim = -1

@@ -106,9 +106,11 @@ class FeatureScene:
         else:
             assert False, "Could not recognize scene type!"
         self.scene_info = scene_info
+        train_camera_infos = deepcopy(scene_info.train_cameras)
+        test_camera_infos = deepcopy(scene_info.test_cameras)
         if shuffle:
-            train_camera_infos = random.shuffle(deepcopy(scene_info.train_cameras))  # Multi-res consistent random shuffling
-            test_camera_infos = random.shuffle(deepcopy(scene_info.test_cameras))  # Multi-res consistent random shuffling
+            random.shuffle(train_camera_infos)  # Multi-res consistent random shuffling
+            random.shuffle(test_camera_infos)  # Multi-res consistent random shuffling
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 

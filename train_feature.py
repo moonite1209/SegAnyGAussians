@@ -29,8 +29,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-import pytorch3d.op
-import time
 from utils.visualization_utils import feature_map_to_image, features_to_color, scalar_to_color
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -98,44 +96,71 @@ def groupby_mask(masks, sample_point):
     ret = []
     for mask in masks:
         ret.append(sample_point[mask[sample_point[:,0], sample_point[:,1]]])
-    return torch.stack(ret)
+    return ret
 def extract_sample(H,W, sample_rate: float, device):
     sample_point = torch.rand(H,W).to(device) < sample_rate
     sample_point = sample_point.nonzero()
     sample_num = len(sample_point)
     return sample_point
-def extract_gt(masks, sample_point):
+
+def calc_intra_mask_loss(point, rendered_features):
+    sample_features = rendered_features[:, point[:,0], point[:,1]]
+    sim = torch.einsum('ac, bc -> ab', sample_features, sample_features.detach())
+    loss = - sim.mean(dim=1)
+    return loss
+
+def calc_inter_mask_loss(point, inter_mask_point, rendered_features):
+    features = rendered_features[:, point[:,0], point[:,1]]
+    inter_mask_features = rendered_features[:, inter_mask_point[:,0], inter_mask_point[:,1]]
+    sim = torch.einsum('ac, bc -> ab', features, inter_mask_features.detach())
+    loss = sim.mean(dim=1)
+    return loss
+
+def calc_loss(opt, masks, rendered_features):
+    N,H,W = masks.shape
+    sample_point = extract_sample(H,W, opt.sample_rate, masks.device)
     point_in_mask = groupby_mask(masks, sample_point)
-    point_in_background = groupby_mask(~masks.any(dim=0,keepdim=True), sample_point).squeeze(0)
-    return {'point_in_mask': point_in_mask, 'point_in_background': point_in_background}
+    point_in_background = groupby_mask(~masks.any(dim=0,keepdim=True), sample_point)
+    intra_loss = []
+    inter_loss = []
+    for intra_mask_point in point_in_mask:
+        intra_point_loss = calc_intra_mask_loss(intra_mask_point, rendered_features)
+        intra_loss.append(intra_point_loss)
+        inter_point_loss = []
+        for inter_mask_point in [*[p for p in point_in_mask if p != intra_mask_point], *point_in_background]:
+            inter_point_loss.append(calc_inter_mask_loss(intra_mask_point, inter_mask_point, rendered_features))
+        inter_point_loss = torch.stack(inter_point_loss, dim=1).mean(dim=1)
+        inter_loss.append(inter_point_loss)
+    intra_loss = torch.cat(intra_loss, dim=0).mean(dim=0)
+    inter_loss = torch.cat(inter_loss, dim=0).mean(dim=0)
+    loss = intra_loss + inter_loss
+    return loss, intra_loss.detach(), inter_loss.detach()
 
-def extract_pred(rendered_features):
-    return rendered_features
-
-def calc_loss(pred, point_groupby):
-    point_in_mask = point_groupby['point_in_mask']
-    point_in_background = point_groupby['point_in_background']
-
-def train_batch(batch, cameras: List[Camera], progress_bar, scene, feature_gaussians, opt, pipe, background):
-    for iteration, camera in enumerate(cameras):
-        N,H,W = camera.original_masks
-        device = camera.original_masks.device
-        render_pkg = render_contrastive_feature(camera, feature_gaussians, pipe, background)
+def train_batch(iteration, batch, cameras: List[Camera], progress_bar, scene, feature_gaussians: FeatureGaussianModel, opt, pipe, background, background_feature):
+    batch_size = len(cameras)
+    for i, camera in enumerate(cameras):
+        camera.to('cuda')
+        N,H,W = camera.original_masks.shape
+        render_pkg = render_contrastive_feature(camera, feature_gaussians, pipe, background_feature)
         rendered_features = render_pkg["render"]
-        sample_point = extract_sample(H,W, opt.sample_rate, device)
-        point_groupby = extract_gt(camera.original_masks, sample_point)
-        pred = extract_pred(rendered_features)
-        loss = calc_loss(pred, point_groupby)
+        loss, intra_loss, inter_loss = calc_loss(opt, camera.original_masks, rendered_features)
+        iteration+=1
+        loss.backward()
+    feature_gaussians.optimizer.step()
+    batch_report(tb_writer, iteration, feature_gaussians, loss, intra_loss, inter_loss, iter_time)
+    feature_gaussians.optimizer.zero_grad()
+    return iteration
 
-def train_epoch(epoch, train_dataloader, progress_bar, scene, feature_gaussians, opt, pipe, background):
+def train_epoch(iteration, epoch, train_dataloader, progress_bar, scene, feature_gaussians, opt, pipe, background, background_feature, tb_writer, test_iterations):
     for batch, cameras in enumerate(train_dataloader):
-        train_batch(batch, cameras, progress_bar, scene, feature_gaussians, opt, pipe, background)
+        iteration = train_batch(iteration, batch, cameras, progress_bar, scene, feature_gaussians, opt, pipe, background, background_feature)
+    epoch_report(tb_writer, iteration, val_dataset, feature_gaussians, 
+                 get_render_image = lambda viewpoint: render(viewpoint, feature_gaussians, pipe, background)['render'].detach(), 
+                 get_feature_map = lambda viewpoint: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature)['render'].detach(), 
+                 get_depth_map = lambda viewpoint: render_with_depth(viewpoint, feature_gaussians, pipe, background)['depth'].detach())
+    return iteration
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, debug_from):
-    print("RFN weight:", opt.rfn)
-    assert opt.ray_sample_rate > 0 or opt.num_sampled_rays > 0
-
-    tb_writer = prepare_logger(dataset)
 
     feature_gaussians = FeatureGaussianModel(dataset.sh_degree, dataset.feature_dim)
     feature_gaussians.load_ply(dataset.point_cloud_path)
@@ -152,14 +177,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
     
-    first_iter = 0
+    iteration = 0
     iterations = len(scene.getTrainDataset())*opt.epochs
-    progress_bar = tqdm(range(first_iter, iterations), desc="Training progress")
-    first_iter += 1
+    progress_bar = tqdm(range(iteration, iterations), desc="Training progress")
+
+    tb_writer = prepare_logger(dataset)
 
     for epoch in range(opt.epochs):
-        train_dataloader = DataLoader(scene.getTrainDataset(), batch_size=1, shuffle=True, num_workers=8)
-        train_epoch(epoch, train_dataloader, progress_bar, scene, feature_gaussians, opt, pipe, background_feature)
+        train_dataloader = DataLoader(scene.getTrainDataset(), batch_size=1, shuffle=True, num_workers=16, collate_fn=lambda x: x)
+        iteration = train_epoch(iteration, epoch, train_dataloader, progress_bar, scene, feature_gaussians, opt, pipe, background, background_feature, tb_writer, testing_iterations)
 
 
 
