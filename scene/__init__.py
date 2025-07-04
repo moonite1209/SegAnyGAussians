@@ -126,6 +126,9 @@ class FeatureScene:
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
     
+    def getCameraDataset(self, scale=1.0):
+        return CameraDataset(self.args, [*self.scene_info.train_cameras, *self.scene_info.test_cameras], scale)
+    
     def getTrainDataset(self, scale=1.0):
         return CameraDataset(self.args, self.scene_info.train_cameras, scale)
     
