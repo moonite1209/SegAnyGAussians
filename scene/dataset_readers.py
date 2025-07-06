@@ -37,6 +37,7 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     masks_path: str
+    labels_path: str
     cx: float = None
     cy: float = None
 
@@ -70,7 +71,7 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folder = None, sample_rate = 1.0):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folder = None, labels_folder = None, sample_rate = 1.0):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         if idx % 10 >= sample_rate * 10:
@@ -117,16 +118,15 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folde
         #     if images_folder and os.path.exists(os.path.join(images_folder, extr.name)) \
         #         else None
         image_path = os.path.join(images_folder, extr.name)
-        # masks = torch.load(os.path.join(masks_folder, image_name_noext + ".pt"), weights_only=True) \
-        #     if masks_folder and os.path.exists(os.path.join(masks_folder, image_name_noext + ".pt")) \
-        #         else None
+
         masks_path = os.path.join(masks_folder, image_name_noext + ".pt") \
             if masks_folder else None
-        # masks = os.path.join(masks_folder, image_name_noext + ".pt") \
-        #     if masks_folder and os.path.exists(os.path.join(masks_folder, image_name_noext + ".pt")) \
-        #         else None
+        
+        labels_path = os.path.join(labels_folder, image_name_noext + ".pt") \
+            if labels_folder else None
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image_path=image_path, masks_path=masks_path,
+
+        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image_path=image_path, masks_path=masks_path, labels_path=labels_path,
                             image_name=image_name_noext, width=width, height=height, cx=cx, cy=cy)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
@@ -171,7 +171,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, sample_rate = 1.0, args=
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=args.images_path, masks_folder=args.masks_path, sample_rate=sample_rate)
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=args.images_path, masks_folder=args.masks_path, labels_folder=args.labels_path, sample_rate=sample_rate)
 
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 

@@ -11,6 +11,7 @@ import numpy as np
 import torch.nn.functional as F
 from scene import FeatureScene, FeatureGaussianModel
 from utils.general_utils import safe_state
+from torch.utils.data import DataLoader
 from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.preprocessing import minmax_scale, robust_scale, normalize
 from sklearn.cluster import HDBSCAN
@@ -101,8 +102,13 @@ def clustering(args, raw_features: np.ndarray, raw_xyzs: np.ndarray):
     labels = labels_postprocess(args, xyzs, labels)
     return labels
 
-def assign_class(args, labels, cameras, feature_gaussians, pipe, background_color, background_feature):
-    ...
+def assign_class(args, cluster_labels, cameras, feature_gaussians, pipe, background_color, background_feature):
+    for camera in DataLoader(cameras, batch_size=None, shuffle=False, num_workers=os.cpu_count()):
+        masks = camera.original_masks
+        class_labels = camera.labels
+        render_pkg = render_with_max_contributor(camera, feature_gaussians, pipe, background_color)
+        max_contributor = render_pkg['max_contributor'].detach().cpu()
+        max_cluster_contributor = cluster_labels[max_contributor]
 
 def output_json(path, labels, classes, **kwargs):
     ...

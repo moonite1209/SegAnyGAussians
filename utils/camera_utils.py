@@ -60,11 +60,12 @@ def loadCam(args, id, cam_info, resolution_scale):
     ).squeeze(1)
     resized_masks = (resized_masks_float > 0.5).bool()
 
+    labels = torch.load(cam_info.labels_path, weights_only=True)
 
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=gt_alpha_mask,
-                  image_name=cam_info.image_name, cx=cam_info.cx, cy=cam_info.cy, masks = resized_masks, uid=id)
+                  image_name=cam_info.image_name, cx=cam_info.cx, cy=cam_info.cy, masks = resized_masks, labels = labels, uid=id)
 
 # def loadCam(emmm):
 
