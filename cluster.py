@@ -102,16 +102,37 @@ def clustering(args, raw_features: np.ndarray, raw_xyzs: np.ndarray):
     labels = labels_postprocess(args, xyzs, labels)
     return labels
 
+def choose_class(classes, class_labels, vote, total_vote):
+    backgound_vote = total_vote - vote.sum()
+    if vote.max() < backgound_vote:
+        return 'background'
+    return classes[vote.argmax()]
+
 def assign_class(args, cluster_labels, cameras, feature_gaussians, pipe, background_color, background_feature):
+    cluster_to_class = {}
     for camera in DataLoader(cameras, batch_size=None, shuffle=False, num_workers=os.cpu_count()):
-        masks = camera.original_masks
-        class_labels = camera.labels
+        masks = camera.original_masks.numpy()
+        background_mask = ~masks.any(axis = 0)
+        class_labels = camera.labels.numpy()
+        camera.to('cuda')
         render_pkg = render_with_max_contributor(camera, feature_gaussians, pipe, background_color)
-        max_contributor = render_pkg['max_contributor'].detach().cpu()
+        max_contributor = render_pkg['max_contributor'].detach().cpu().numpy()
         max_cluster_contributor = cluster_labels[max_contributor]
+        for cluster_label in np.unique(max_cluster_contributor):
+            vote = masks[:, max_cluster_contributor==cluster_label].sum(axis=1)
+            klass = choose_class(args.classes, class_labels, vote, np.count_nonzero(max_cluster_contributor==cluster_label))
+            cluster_to_class[cluster_label] = args.classes[klass]
+    return cluster_to_class
 
 def output_json(path, labels, classes, **kwargs):
-    ...
+    output = {}
+    output['point_labels'] = labels
+    instances = {str(cluster): {'class': klass} for cluster, klass in classes.items() if klass in ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed']}
+    output['instances'] = instances
+    for k, v in kwargs:
+        output[k] = v
+    with open(args.json_path,'w') as f:
+        json.dump(output,f)
 
 def clean(args):
     if not args.clean:
@@ -127,8 +148,8 @@ def main(dataset: ModelParams, pipe: PipelineParams, args):
     feature_gaussians, background_color, background_feature = load_model(dataset)
     cameras = load_cameras(dataset, feature_gaussians)
     labels = clustering(args, feature_gaussians.get_instance_features.cpu().numpy(), feature_gaussians.get_xyz.cpu().numpy())
-    classes = assign_class(args, labels, cameras, feature_gaussians, pipe, background_color, background_feature)
-    output_json(args.json_path, labels, classes)
+    cluster_to_class = assign_class(args, labels, cameras, feature_gaussians, pipe, background_color, background_feature)
+    output_json(args.json_path, labels.tolist(), cluster_to_class)
     clean(args)
 
 if __name__ == "__main__":
