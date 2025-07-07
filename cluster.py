@@ -102,14 +102,14 @@ def clustering(args, raw_features: np.ndarray, raw_xyzs: np.ndarray):
     labels = labels_postprocess(args, xyzs, labels)
     return labels
 
-def choose_class(classes, class_labels, vote, total_vote):
-    backgound_vote = total_vote - vote.sum()
-    if vote.max() < backgound_vote:
+def choose_class(classes, vote):
+    vote, backgound_vote = vote[:-1], vote[-1]
+    if vote.max() <= backgound_vote:
         return 'background'
     return classes[vote.argmax()]
 
 def assign_class(args, cluster_labels, cameras, feature_gaussians, pipe, background_color, background_feature):
-    cluster_to_class = {}
+    cluster_to_class = {i.item(): np.zeros(len(args.classes)+1) for i in np.unique(cluster_labels) if i>=0}
     for camera in DataLoader(cameras, batch_size=None, shuffle=False, num_workers=os.cpu_count()):
         masks = camera.original_masks.numpy()
         background_mask = ~masks.any(axis = 0)
@@ -119,9 +119,13 @@ def assign_class(args, cluster_labels, cameras, feature_gaussians, pipe, backgro
         max_contributor = render_pkg['max_contributor'].detach().cpu().numpy()
         max_cluster_contributor = cluster_labels[max_contributor]
         for cluster_label in np.unique(max_cluster_contributor):
+            if cluster_label < 0:
+                continue
             vote = masks[:, max_cluster_contributor==cluster_label].sum(axis=1)
-            klass = choose_class(args.classes, class_labels, vote, np.count_nonzero(max_cluster_contributor==cluster_label))
-            cluster_to_class[cluster_label] = args.classes[klass]
+            vote_background = background_mask[max_cluster_contributor==cluster_label].sum(axis=0)
+            np.add.at(cluster_to_class[cluster_label], class_labels, vote)
+            np.add.at(cluster_to_class[cluster_label], -1, vote_background)
+    cluster_to_class = {k: choose_class(args.classes, v) for k, v in cluster_to_class.items()}
     return cluster_to_class
 
 def output_json(path, labels, classes, **kwargs):
@@ -131,7 +135,7 @@ def output_json(path, labels, classes, **kwargs):
     output['instances'] = instances
     for k, v in kwargs:
         output[k] = v
-    with open(args.json_path,'w') as f:
+    with open(path,'w') as f:
         json.dump(output,f)
 
 def clean(args):
@@ -153,7 +157,7 @@ def main(dataset: ModelParams, pipe: PipelineParams, args):
     clean(args)
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="Training script parameters")
+    parser = ArgumentParser(description="Clustering script parameters")
     lp = ModelParams(parser)
     pp = PipelineParams(parser)
     parser.add_argument("--progress_path", type=str, required=True)

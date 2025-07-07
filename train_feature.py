@@ -30,6 +30,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split
 from utils.visualization_utils import feature_map_to_image, features_to_color, scalar_to_color
+import hydra
+from omegaconf import DictConfig, OmegaConf
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -42,8 +44,8 @@ def groupby_mask(masks, sample_point):
     for mask in masks:
         ret.append(sample_point[mask[sample_point[:,0], sample_point[:,1]]])
     return ret
-def extract_sample(H,W, sample_rate: float, device):
-    sample_point = torch.rand(H,W).to(device) < sample_rate
+def extract_sample(H,W, sample_rate: float):
+    sample_point = torch.rand(H,W) < sample_rate
     sample_point = sample_point.nonzero()
     sample_num = len(sample_point)
     return sample_point
@@ -63,7 +65,7 @@ def calc_inter_mask_loss(point, inter_mask_point, rendered_features):
 
 def calc_loss(opt, masks, rendered_features):
     N,H,W = masks.shape
-    sample_point = extract_sample(H,W, opt.sample_rate, masks.device)
+    sample_point = extract_sample(H,W, opt.sample_rate).to(masks.device)
     point_in_mask = filter(lambda p: len(p)>0, groupby_mask(masks, sample_point))
     point_in_background = filter(lambda p: len(p)>0, groupby_mask(~masks.any(dim=0,keepdim=True), sample_point))
     intra_loss = []
@@ -80,6 +82,30 @@ def calc_loss(opt, masks, rendered_features):
     inter_loss = torch.cat(inter_loss, dim=0).mean(dim=0)
     loss = intra_loss + inter_loss
     return loss, intra_loss.detach(), inter_loss.detach()
+
+def calc_loss_mask_avg(opt, masks, rendered_features):
+    N,H,W = masks.shape
+    background_mask = ~masks.any(dim=0)
+    background_mask_feature = F.normalize(rendered_features[:, background_mask].mean(dim=1), dim=0)
+    mask_features = []
+    intra_loss = []
+    inter_loss = []
+    for mask in masks:
+        mask_feature = F.normalize(rendered_features[:, mask].mean(dim=1), dim=0)
+        mask_features.append(mask_feature)
+        sim = torch.einsum('ca, cb -> ab', rendered_features[:, mask], mask_feature[:,None].detach())
+        mask_intra_loss = (-sim).squeeze(1).mean(dim=0)
+        intra_loss.append(mask_intra_loss)
+    for mask_feature in mask_features:
+        other_mask_features = [*[f for f in mask_features if f is not mask_feature], background_mask_feature]
+        sim = torch.einsum('ac,bc -> ab', mask_feature[None, ...], torch.stack(other_mask_features, dim=0).detach())
+        mask_inter_loss = sim.mean(dim=1).squeeze(0)
+        inter_loss.append(mask_inter_loss)
+    intra_loss = torch.stack(intra_loss).mean(dim=0)
+    inter_loss = torch.stack(inter_loss).mean(dim=0)
+    loss = intra_loss + inter_loss
+    return loss, intra_loss.detach(), inter_loss.detach()
+
 
 def batch_report(tb_writer: SummaryWriter, iteration, feature_gaussians, loss, intra_loss, inter_loss, batch_time):
     if tb_writer is None:
@@ -106,9 +132,8 @@ def epoch_report(tb_writer, iteration, val_dataloader, feature_gaussians, get_re
         tb_writer.add_images(f"val_view_{camera.image_name}/feature/render", features_to_color(feature_map.flatten(1).permute(1,0)).permute(1,0).reshape(-1,H,W)[None], global_step=iteration)
         l1_test += l1_loss(image, gt_image).mean().double()
         psnr_test += psnr(image, gt_image).mean().double()
-    psnr_test /= len(val_dataloader) * val_dataloader.batch_size
-    l1_test /= len(val_dataloader) * val_dataloader.batch_size
-    print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, 'val', l1_test, psnr_test))
+    psnr_test /= len(val_dataloader)
+    l1_test /= len(val_dataloader)
     tb_writer.add_scalar(f"val/loss_viewpoint - l1_loss", l1_test, iteration)
     tb_writer.add_scalar(f"val/loss_viewpoint - psnr", psnr_test, iteration)
     tb_writer.add_histogram("scene/opacity_histogram", feature_gaussians.get_opacity, iteration)
@@ -137,7 +162,7 @@ def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: 
     N,H,W = camera.original_masks.shape
     render_pkg = render_contrastive_feature(camera, feature_gaussians, pipe, background_feature)
     rendered_features = render_pkg["render"]
-    loss, intra_loss, inter_loss = calc_loss(opt, camera.original_masks, rendered_features)
+    loss, intra_loss, inter_loss = calc_loss_mask_avg(opt, camera.original_masks, rendered_features)
     loss.backward()
     batch_timing_end.record()
     feature_gaussians.optimizer.step()
@@ -172,6 +197,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
     num_val = 10
     num_train = len(cameras) - num_val
     train_cameras, val_cameras = random_split(cameras, [num_train, num_val])
+    train_cameras = cameras
 
     background = torch.tensor([1.]*3 if dataset.white_background else [0.]*3, dtype=torch.float32, device="cuda")
     background_feature = torch.tensor([0.]*dataset.feature_dim, dtype=torch.float32, device="cuda")
@@ -198,7 +224,8 @@ def prepare_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-if __name__ == "__main__":
+@hydra.main(config_path="configs", config_name="config", version_base=None)
+def main(cfg : DictConfig):
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
     lp = ModelParams(parser)
@@ -223,7 +250,10 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.debug_from)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.save_iterations, args.checkpoint_iterations, args.debug_from)
 
     # All done
     print("\nTraining complete.")
+
+if __name__ == "__main__":
+    main()

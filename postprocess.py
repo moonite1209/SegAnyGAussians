@@ -72,7 +72,7 @@ print(f'{point_features.shape=}, {point_xyz.shape=}')
 
 sample_num = args.sample_num
 if sample_num < 0:
-    sampled_mask = torch.rand(point_xyz.shape[0]) > 0.99
+    sampled_mask = torch.rand(point_xyz.shape[0]) > 0.98
     sample_num = sampled_mask.sum()
 else:
     sampled_mask = uniform_sample(point_xyz.shape[0], sample_num, device='cpu')
@@ -97,7 +97,7 @@ def get_hybird_sim(a, b):
     feature_sim = np.clip((np.dot(point_feature1, point_feature2)+1)/2, 0, 1)
     std_xyz_sim = np.clip(np.exp(-np.linalg.norm(std_point_xyz1 - std_point_xyz2)), 0, 1)
     return args.feature_ratio * feature_sim + (1-args.feature_ratio) * std_xyz_sim
-clusterer = HDBSCAN(min_cluster_size=10, cluster_selection_epsilon=0.01, allow_single_cluster = False, metric='precomputed', core_dist_n_jobs=-1) # HDBSCAN
+clusterer = HDBSCAN(min_cluster_size=10, cluster_selection_epsilon=0.00000001, allow_single_cluster = False, metric='precomputed', core_dist_n_jobs=-1) # HDBSCAN
 
 sampled_point_features_distance = torch.clamp(1-torch.einsum('ac,bc -> ab', sampled_point_features, sampled_point_features), 0)
 sampled_std_point_xyz_distance = torch.clamp(torch.norm(sampled_std_point_xyz[:,None,:] - sampled_std_point_xyz[None,:,:], dim=-1), 0)

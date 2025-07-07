@@ -224,7 +224,7 @@ class FeatureGaussianModel(GaussianModel):
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda"))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda"))
         self._instance_feature = nn.Parameter(torch.tensor(instance_feature, dtype=torch.float, device="cuda").contiguous())
-        self._std = nn.Parameter(torch.tensor((1.0), dtype=torch.float, device="cuda"))
+        self._std = nn.Parameter(torch.tensor((0.05), dtype=torch.float, device="cuda"))
 
         self.active_sh_degree = self.max_sh_degree
 
