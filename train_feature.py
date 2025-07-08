@@ -63,9 +63,9 @@ def calc_inter_mask_loss(point, inter_mask_point, rendered_features):
     loss = sim.mean(dim=1)
     return loss
 
-def calc_loss(opt, masks, rendered_features):
+def calc_loss(args, masks, rendered_features):
     N,H,W = masks.shape
-    sample_point = extract_sample(H,W, opt.sample_rate).to(masks.device)
+    sample_point = extract_sample(H,W, args.sample_rate).to(masks.device)
     point_in_mask = filter(lambda p: len(p)>0, groupby_mask(masks, sample_point))
     point_in_background = filter(lambda p: len(p)>0, groupby_mask(~masks.any(dim=0,keepdim=True), sample_point))
     intra_loss = []
@@ -83,7 +83,7 @@ def calc_loss(opt, masks, rendered_features):
     loss = intra_loss + inter_loss
     return loss, intra_loss.detach(), inter_loss.detach()
 
-def calc_loss_mask_avg(opt, masks, rendered_features):
+def calc_loss_mask_avg(args, masks, rendered_features):
     N,H,W = masks.shape
     background_mask = ~masks.any(dim=0)
     background_mask_feature = F.normalize(rendered_features[:, background_mask].mean(dim=1), dim=0)
@@ -153,7 +153,7 @@ def start_report(tb_writer, val_dataloader, feature_gaussians, get_depth_map):
         tb_writer.add_images(f"val_view_{camera.image_name}/feature/ground_truth", mask_map[None], global_step=0)
         tb_writer.add_images(f"val_view_{camera.image_name}/depth/ground_truth", scalar_to_color(depth_map[0].flatten()).permute(1,0).reshape(-1,H,W)[None], global_step=0)
 
-def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: FeatureGaussianModel, opt, pipe, background, background_feature, tb_writer):
+def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: FeatureGaussianModel, args, pipe, background, background_feature, tb_writer):
     batch_timing_start = torch.cuda.Event(enable_timing=True)
     batch_timing_end = torch.cuda.Event(enable_timing=True)
 
@@ -162,7 +162,7 @@ def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: 
     N,H,W = camera.original_masks.shape
     render_pkg = render_contrastive_feature(camera, feature_gaussians, pipe, background_feature)
     rendered_features = render_pkg["render"]
-    loss, intra_loss, inter_loss = calc_loss_mask_avg(opt, camera.original_masks, rendered_features)
+    loss, intra_loss, inter_loss = calc_loss_mask_avg(args, camera.original_masks, rendered_features)
     loss.backward()
     batch_timing_end.record()
     feature_gaussians.optimizer.step()
@@ -174,83 +174,71 @@ def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: 
     batch_report(tb_writer, train_bar.n*epoch_bar.total+epoch_bar.n, feature_gaussians, loss, intra_loss, inter_loss, batch_timing_start.elapsed_time(batch_timing_end))
     feature_gaussians.optimizer.zero_grad()
 
-def train_epoch(train_bar, train_dataloader, val_dataloader, scene, feature_gaussians, opt, pipe, background, background_feature, tb_writer):
+def train_epoch(train_bar, train_dataloader, val_dataloader, scene, feature_gaussians, args, pipe, background, background_feature, tb_writer):
     epoch_bar = tqdm(train_dataloader, desc="Epoch progress", position=1, leave=False)
     for camera in epoch_bar:
-        train_batch(train_bar, epoch_bar, camera, scene, feature_gaussians, opt, pipe, background, background_feature, tb_writer)
+        train_batch(train_bar, epoch_bar, camera, scene, feature_gaussians, args, pipe, background, background_feature, tb_writer)
     epoch_report(tb_writer, train_bar.n*epoch_bar.total+epoch_bar.n, val_dataloader, feature_gaussians, 
                  get_render_image = lambda viewpoint: render(viewpoint, feature_gaussians, pipe, background)['render'].detach(), 
                  get_feature_map = lambda viewpoint: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature)['render'].detach(), 
                  get_depth_map = lambda viewpoint: render_with_depth(viewpoint, feature_gaussians, pipe, background)['depth'].detach())
 
-def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams, saving_iterations, checkpoint_iterations, debug_from):
+def training(model, dataset, pipe, args):
 
-    feature_gaussians = FeatureGaussianModel(dataset.sh_degree, dataset.feature_dim)
-    feature_gaussians.load_ply(dataset.point_cloud_path)
-    feature_gaussians.training_setup(opt)
+
+    feature_gaussians = FeatureGaussianModel(model.sh_degree, model.feature_dim)
+    feature_gaussians.load_ply(args.point_cloud_path)
     feature_gaussians.eval()
     feature_gaussians._instance_feature.requires_grad_()
+    feature_gaussians.training_setup(args)
 
-    scene = FeatureScene(dataset, feature_gaussians, shuffle=False)
+    background = torch.tensor([1.]*3 if model.white_background else [0.]*3, dtype=torch.float32, device="cuda")
+    background_feature = torch.tensor([0.]*model.feature_dim, dtype=torch.float32, device="cuda")
 
-    cameras = scene.getCameraDataset()
+    scene = FeatureScene(dataset)
+
+    cameras = scene.getTrainDataset()
     num_val = 10
     num_train = len(cameras) - num_val
     train_cameras, val_cameras = random_split(cameras, [num_train, num_val])
     train_cameras = cameras
 
-    background = torch.tensor([1.]*3 if dataset.white_background else [0.]*3, dtype=torch.float32, device="cuda")
-    background_feature = torch.tensor([0.]*dataset.feature_dim, dtype=torch.float32, device="cuda")
-
-    tb_writer = prepare_logger(dataset)
+    tb_writer = prepare_logger(args)
 
     start_report(tb_writer, DataLoader(val_cameras, batch_size=None, shuffle=False, num_workers=os.cpu_count()), feature_gaussians, 
                   get_depth_map = lambda camera: render_with_depth(camera, feature_gaussians, pipe, background)['depth'].detach())
-    train_bar = tqdm(range(opt.epochs), desc="Train progress", position=0)
+    train_bar = tqdm(range(args.epochs), desc="Train progress", position=0)
     for epoch in train_bar:
         train_dataloader = DataLoader(train_cameras, batch_size=None, shuffle=True, num_workers=os.cpu_count())
         val_dataloader = DataLoader(val_cameras, batch_size=None, shuffle=False, num_workers=os.cpu_count())
-        train_epoch(train_bar, train_dataloader, val_dataloader, scene, feature_gaussians, opt, pipe, background, background_feature, tb_writer)
-    feature_gaussians.save_ply(args.contrastive_feature_point_cloud_path)
+        train_epoch(train_bar, train_dataloader, val_dataloader, scene, feature_gaussians, args, pipe, background, background_feature, tb_writer)
+    feature_gaussians.save_ply(args.feature_point_cloud_path)
 
     return
 
 def prepare_logger(args):    
     # Create Tensorboard writer
     tb_writer = None
-    if TENSORBOARD_FOUND and os.path.exists(args.log_path):
-        tb_writer = SummaryWriter(args.log_path)
+    if TENSORBOARD_FOUND and os.path.exists(args.tb_path):
+        tb_writer = SummaryWriter(args.tb_path)
     else:
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-@hydra.main(config_path="configs", config_name="config", version_base=None)
+@hydra.main(config_path="configs", config_name="training", version_base=None)
 def main(cfg : DictConfig):
-    # Set up command line argument parser
-    parser = ArgumentParser(description="Training script parameters")
-    lp = ModelParams(parser)
-    op = OptimizationParams(parser)
-    pp = PipelineParams(parser)
-    parser.add_argument("--progress_path", type=str, required=True)
-    parser.add_argument('--ip', type=str, default="127.0.0.1")
-    parser.add_argument('--port', type=int, default=np.random.randint(10000, 20000))
-    parser.add_argument('--debug_from', type=int, default=-1)
-    parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1, 1000,2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[])
-    parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
-    parser.add_argument("--start_checkpoint", type=str, default = None)
+    model  = cfg.model
+    dataset = cfg.dataset
+    pipe = cfg.pipe
+    args = cfg.training
     
-    args = parser.parse_args(sys.argv[1:])
-    
-    print("Optimizing " + args.images_path)
+    print("Optimizing " + dataset.images_path)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.save_iterations, args.checkpoint_iterations, args.debug_from)
+    training(model, dataset, pipe, args)
 
     # All done
     print("\nTraining complete.")

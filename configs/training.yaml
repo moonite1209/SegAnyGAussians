@@ -1,0 +1,8 @@
+defaults:
+  - model: farsee
+  - dataset: farsee
+  - pipe: default
+  - training: farsee
+  - _self_
+
+base_path: data/temp/1750728479386.658

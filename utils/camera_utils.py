@@ -19,14 +19,14 @@ from PIL import Image
 
 WARNED = True
 
-def loadCam(args, id, cam_info, resolution_scale):
+def loadCam(resolution, id, cam_info, resolution_scale):
     image = Image.open(cam_info.image_path)
 
     orig_w, orig_h = image.size
-    if args.resolution in [1, 2, 4, 8]:
-        scale = args.resolution * resolution_scale
+    if resolution in [1, 2, 4, 8]:
+        scale = resolution * resolution_scale
     else:  # should be a type that converts to float
-        if args.resolution == -1:
+        if resolution == -1:
             if orig_w > 1600:
                 global WARNED
                 if not WARNED:
@@ -37,8 +37,7 @@ def loadCam(args, id, cam_info, resolution_scale):
             else:
                 global_down = 1
         else:
-            global_down = orig_w / args.resolution
-
+            global_down = orig_w / resolution
         scale = float(global_down) * float(resolution_scale)
     resized_w, resized_h = (int(orig_w / scale), int(orig_h / scale))
 
@@ -50,17 +49,24 @@ def loadCam(args, id, cam_info, resolution_scale):
     if resized_image_rgb.shape[1] == 4:
         gt_alpha_mask = resized_image_rgb[3:4, ...]
 
-    masks = torch.load(cam_info.masks_path, weights_only=True)
-    masks_float = masks.float()
-    resized_masks_float = F.interpolate(
-        masks_float.unsqueeze(1),
-        size=(resized_h, resized_w),  # (H, W)
-        mode='bilinear',
-        align_corners=False
-    ).squeeze(1)
-    resized_masks = (resized_masks_float > 0.5).bool()
+    if cam_info.masks_path:
+        masks = torch.load(cam_info.masks_path, weights_only=True)
+        masks_float = masks.float()
+        resized_masks_float = F.interpolate(
+            masks_float.unsqueeze(1),
+            size=(resized_h, resized_w),  # (H, W)
+            mode='bilinear',
+            align_corners=False
+        ).squeeze(1)
+        resized_masks = (resized_masks_float > 0.5).bool()
+        masks = resized_masks
+    else:
+        masks = None
 
-    labels = torch.load(cam_info.labels_path, weights_only=True)
+    if cam_info.labels_path:
+        labels = torch.load(cam_info.labels_path, weights_only=True)
+    else:
+        labels = None
 
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
@@ -104,10 +110,10 @@ def loadCam(args, id, cam_info, resolution_scale):
 #                   image_name=cam_info.image_name, uid=id, data_device=args.data_device)
 
 
-def cameraList_from_camInfos(cam_infos, resolution_scale, args):
+def cameraList_from_camInfos(cam_infos, resolution_scale, resolution):
     camera_list = []
     for id, c in enumerate(cam_infos):
-        camera_list.append(loadCam(args, id, c, resolution_scale))
+        camera_list.append(loadCam(resolution, id, c, resolution_scale))
     return camera_list
 
 

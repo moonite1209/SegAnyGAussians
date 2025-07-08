@@ -1,0 +1,7 @@
+resolution: 1
+eval: false
+allow_principle_point_shift: false
+images_path: '${base_path}/fastRecon/dense/sparse/0/images'
+sparse_path: '${base_path}/fastRecon/dense/sparse/0'
+masks_path: '${base_path}/masks'
+labels_path: '${base_path}/labels'

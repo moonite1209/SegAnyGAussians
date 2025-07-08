@@ -12,6 +12,7 @@
 import torch
 import pytorch3d.ops
 import numpy as np
+from scene.dataset_readers import fetchPly
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
 from torch import nn
 import torch.nn.functional as F
@@ -83,7 +84,8 @@ class FeatureGaussianModel(GaussianModel):
     def parameters(self):
         return [*super().parameters(), self._instance_feature, self._std]
 
-    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
+    def create_from_pcd(self, path, spatial_lr_scale : float):
+        pcd = fetchPly(path)
         self.spatial_lr_scale = spatial_lr_scale
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
         fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())

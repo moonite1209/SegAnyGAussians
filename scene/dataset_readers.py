@@ -71,11 +71,9 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folder = None, labels_folder = None, sample_rate = 1.0):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folder = None, labels_folder = None):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
-        if idx % 10 >= sample_rate * 10:
-            continue
         sys.stdout.write('\r')
         # the exact output you're looking for:
         sys.stdout.write(f"Reading camera {idx+1}/{len(cam_extrinsics)}")
@@ -159,19 +157,19 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8, sample_rate = 1.0, args=None):
+def readColmapSceneInfo(sparse_path, images_path, masks_path, labels_path, eval = False, llffhold = 8):
     try:
-        cameras_extrinsic_file = os.path.join(path, "images.bin")
-        cameras_intrinsic_file = os.path.join(path, "cameras.bin")
+        cameras_extrinsic_file = os.path.join(sparse_path, "images.bin")
+        cameras_intrinsic_file = os.path.join(sparse_path, "cameras.bin")
         cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
     except:
-        cameras_extrinsic_file = os.path.join(path, "images.txt")
-        cameras_intrinsic_file = os.path.join(path, "cameras.txt")
+        cameras_extrinsic_file = os.path.join(sparse_path, "images.txt")
+        cameras_intrinsic_file = os.path.join(sparse_path, "cameras.txt")
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=args.images_path, masks_folder=args.masks_path, labels_folder=args.labels_path, sample_rate=sample_rate)
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=images_path, masks_folder=masks_path, labels_folder=labels_path)
 
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
@@ -184,9 +182,9 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, sample_rate = 1.0, args=
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
-    ply_path = os.path.join(path, "points3D.ply")
-    bin_path = os.path.join(path, "points3D.bin")
-    txt_path = os.path.join(path, "points3D.txt")
+    ply_path = os.path.join(sparse_path, "points3D.ply")
+    bin_path = os.path.join(sparse_path, "points3D.bin")
+    txt_path = os.path.join(sparse_path, "points3D.txt")
     if not os.path.exists(ply_path):
         print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
         try:

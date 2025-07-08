@@ -6,9 +6,9 @@ from arguments import ModelParams
 from utils.camera_utils import loadCam
 
 class CameraDataset(Dataset):
-    def __init__(self, args: ModelParams, camera_infos, resolution_scale = 1.0):
+    def __init__(self, resolution, camera_infos, resolution_scale = 1.0):
         self.camera_infos = camera_infos
-        self.args = args
+        self.resolution = resolution
         self.resolution_scale = resolution_scale
 
     def __len__(self):
@@ -16,4 +16,4 @@ class CameraDataset(Dataset):
     
     def __getitem__(self, idx):
         camera_info = self.camera_infos[idx]
-        return loadCam(self.args, idx, camera_info, self.resolution_scale)
+        return loadCam(self.resolution, idx, camera_info, self.resolution_scale)
