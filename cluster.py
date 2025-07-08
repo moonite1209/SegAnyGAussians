@@ -17,6 +17,8 @@ from sklearn.preprocessing import minmax_scale, robust_scale, normalize
 from sklearn.cluster import HDBSCAN
 from sklearn.neighbors import KNeighborsClassifier
 from scipy.special import softmax
+import hydra
+from omegaconf import DictConfig
 
 def uniform_sample(N, n_samples):
     selected_indices = np.random.permutation(N)[:n_samples]
@@ -24,16 +26,16 @@ def uniform_sample(N, n_samples):
     mask[selected_indices] = True
     return mask
 
-def load_model(dataset: ModelParams):
-    feature_gaussians = FeatureGaussianModel(dataset.sh_degree, dataset.feature_dim)
-    feature_gaussians.load_ply(dataset.contrastive_feature_point_cloud_path)
+def load_model(args, model):
+    feature_gaussians = FeatureGaussianModel(model.sh_degree, model.feature_dim)
+    feature_gaussians.load_ply(args.feature_point_cloud_path)
     feature_gaussians.eval()
-    background_color = torch.tensor([1.]*3 if dataset.white_background else [0.]*3, dtype=torch.float32, device="cuda")
-    background_feature = torch.tensor([0.]*dataset.feature_dim, dtype=torch.float32, device="cuda")
+    background_color = torch.tensor([1.]*3 if model.white_background else [0.]*3, dtype=torch.float32, device="cuda")
+    background_feature = torch.tensor([0.]*model.feature_dim, dtype=torch.float32, device="cuda")
     return feature_gaussians, background_color, background_feature
 
-def load_cameras(dataset, feature_gaussians):
-    scene = FeatureScene(dataset, feature_gaussians, shuffle=False)
+def load_cameras(dataset):
+    scene = FeatureScene(dataset)
     return scene.getCameraDataset()
 
 def get_sample_mask(total_num, sample_num):
@@ -145,33 +147,23 @@ def clean(args):
         shutil.rmtree(args.masks_path)
     if os.path.isdir(args.labels_path):
         shutil.rmtree(args.labels_path)
-    if os.path.isfile(args.contrastive_feature_point_cloud_path):
-        os.remove(args.contrastive_feature_point_cloud_path)
+    if os.path.isfile(args.feature_point_cloud_path):
+        os.remove(args.feature_point_cloud_path)
 
-def main(dataset: ModelParams, pipe: PipelineParams, args):
-    feature_gaussians, background_color, background_feature = load_model(dataset)
-    cameras = load_cameras(dataset, feature_gaussians)
+@hydra.main(config_path="configs", config_name="clustering", version_base=None)
+def main(cfg: DictConfig):
+    model = cfg.model
+    dataset = cfg.dataset
+    pipe = cfg.pipe
+    args = cfg.clustering
+    
+    safe_state(args.quiet)
+    feature_gaussians, background_color, background_feature = load_model(args, model)
+    cameras = load_cameras(dataset)
     labels = clustering(args, feature_gaussians.get_instance_features.cpu().numpy(), feature_gaussians.get_xyz.cpu().numpy())
     cluster_to_class = assign_class(args, labels, cameras, feature_gaussians, pipe, background_color, background_feature)
     output_json(args.json_path, labels.tolist(), cluster_to_class)
     clean(args)
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="Clustering script parameters")
-    lp = ModelParams(parser)
-    pp = PipelineParams(parser)
-    parser.add_argument("--progress_path", type=str, required=True)
-    parser.add_argument("--clean", action='store_true')
-    parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--k", type=int, default=256)
-    parser.add_argument("--feature_ratio", type=float, default=1.0)
-    parser.add_argument("--instance_threshold", type=float, default=0.25)
-    parser.add_argument("--background_threshold", type=float, default=0.5)
-    parser.add_argument("--scale_threshold", type=float, default=0.8)
-    parser.add_argument("--opcity_threshold", type=float, default=0.01)
-    parser.add_argument("--sample_num", type=int, default=-1)
-    parser.add_argument("--classes", nargs="+", type=str, default=['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person'])
-    args = parser.parse_args()
-    safe_state(args.quiet)
-
-    main(lp.extract(args), pp.extract(args), args)
+    main()
