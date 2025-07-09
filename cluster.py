@@ -112,7 +112,7 @@ def choose_class(classes, vote):
 
 def assign_class(args, cluster_labels, cameras, feature_gaussians, pipe, background_color, background_feature):
     cluster_to_class = {i.item(): np.zeros(len(args.classes)+1) for i in np.unique(cluster_labels) if i>=0}
-    for camera in DataLoader(cameras, batch_size=None, shuffle=False, num_workers=os.cpu_count()):
+    for camera in tqdm(DataLoader(cameras, batch_size=None, shuffle=False, num_workers=os.cpu_count())):
         masks = camera.original_masks.numpy()
         background_mask = ~masks.any(axis = 0)
         class_labels = camera.labels.numpy()
@@ -130,14 +130,14 @@ def assign_class(args, cluster_labels, cameras, feature_gaussians, pipe, backgro
     cluster_to_class = {k: choose_class(args.classes, v) for k, v in cluster_to_class.items()}
     return cluster_to_class
 
-def output_json(path, labels, classes, **kwargs):
+def output_json(args, labels, classes, **kwargs):
     output = {}
     output['point_labels'] = labels
-    instances = {str(cluster): {'class': klass} for cluster, klass in classes.items() if klass in ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed']}
+    instances = {str(cluster): {'class': klass} for cluster, klass in classes.items() if klass in args.selected_classes}
     output['instances'] = instances
     for k, v in kwargs:
         output[k] = v
-    with open(path,'w') as f:
+    with open(args.json_path,'w') as f:
         json.dump(output,f)
 
 def clean(args):
@@ -162,7 +162,7 @@ def main(cfg: DictConfig):
     cameras = load_cameras(dataset)
     labels = clustering(args, feature_gaussians.get_instance_features.cpu().numpy(), feature_gaussians.get_xyz.cpu().numpy())
     cluster_to_class = assign_class(args, labels, cameras, feature_gaussians, pipe, background_color, background_feature)
-    output_json(args.json_path, labels.tolist(), cluster_to_class)
+    output_json(args, labels.tolist(), cluster_to_class)
     clean(args)
 
 if __name__ == "__main__":

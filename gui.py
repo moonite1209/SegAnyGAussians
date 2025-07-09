@@ -18,8 +18,9 @@ from utils.general_utils import safe_state
 from utils.graphics_utils import focal2fov, fov2focal
 
 from scipy.spatial.transform import Rotation as R
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
-# from cuml.cluster.hdbscan import HDBSCAN
 
 def depth2img(depth):
     depth = (depth-depth.min())/(depth.max()-depth.min() + 1e-7)
@@ -719,47 +720,53 @@ class GaussianSplattingGUI:
         dpg.set_value("_texture", self.render_buffer)
 
 
-if __name__ == "__main__":
-    parser = ArgumentParser(description="GUI option")
+class GUI:
+    def __init__(self, args, feature_gaussians):
+        def save_callback():
+            print("Save Clicked")
 
-    parser.add_argument('--sh_degree', type=int, default=3)
-    parser.add_argument('--feature_pcd_path', type=str, required=True)
-    parser.add_argument('--scene_pcd_path', type=str, required=True)
-    parser.add_argument('--json_path', type=str, required=True)
+        dpg.create_context()
+        dpg.create_viewport(title='Viewer', vsync=True)
+        dpg.setup_dearpygui()
 
-    args = parser.parse_args()
+        with dpg.item_handler_registry(tag="handler") as handler:
+            dpg.add_item_resize_handler(callback=lambda s,a,u: print('resize',s,a,u,dpg.get_item_state(s),dpg.get_item_state(a),u))
+            # dpg.add_item_clicked_handler(callback=lambda s,a,u: print('click',s,a,u))
+            # dpg.add_item_visible_handler(callback=lambda s,a,u: print('visible',s,a,u))
 
-    opt = CONFIG()
+        with dpg.texture_registry(show=False):
+            dpg.add_raw_texture(200, 100, np.random.randn(200,100,3).flatten(), format=dpg.mvFormat_Float_rgb, tag="texture", label='image')
 
-    opt.sh_degree = args.sh_degree
-    opt.feature_pcd_path = args.feature_pcd_path
-    opt.scene_pcd_path = args.scene_pcd_path
-    opt.json_path = args.json_path
+        with dpg.window(tag="primary_window"):
+            with dpg.group(horizontal=True):
+                dpg.add_image("texture", tag='image')
+                with dpg.group():
+                    dpg.add_text("Hello world")
+                    dpg.add_button(label="Save", callback=save_callback)
+                    dpg.add_input_text(label="string")
+                    dpg.add_slider_float(label="float")
+        dpg.bind_item_handler_registry("primary_window", "handler")
+        dpg.bind_item_handler_registry("image", "handler")
+        dpg.set_primary_window("primary_window", True)
 
-    gs_model = GaussianModel(opt.sh_degree)
-    feat_gs_model = FeatureGaussianModel(opt.sh_degree, opt.feature_dim)
-    gui = GaussianSplattingGUI(opt, gs_model, feat_gs_model)
-
-    gui.render()
-
-def load_model(dataset: ModelParams):
-    feature_gaussians = FeatureGaussianModel(dataset.sh_degree, dataset.feature_dim)
-    feature_gaussians.load_ply(dataset.contrastive_feature_point_cloud_path)
+        dpg.show_viewport()
+        dpg.start_dearpygui()
+        dpg.destroy_context()
+def load_model(args, model):
+    feature_gaussians = FeatureGaussianModel(model.sh_degree, model.feature_dim)
+    feature_gaussians.load_ply(args.feature_point_cloud_path)
     feature_gaussians.eval()
-    background_color = torch.tensor([1.]*3 if dataset.white_background else [0.]*3, dtype=torch.float32, device="cuda")
-    background_feature = torch.tensor([0.]*dataset.feature_dim, dtype=torch.float32, device="cuda")
+    background_color = torch.tensor([1.]*3 if model.white_background else [0.]*3, dtype=torch.float32, device="cuda")
+    background_feature = torch.tensor([0.]*model.feature_dim, dtype=torch.float32, device="cuda")
     return feature_gaussians, background_color, background_feature
 
-def main(dataset: ModelParams, pipe: PipelineParams, args):
-    feature_gaussians, background_color, background_feature = load_model(dataset)
+@hydra.main(config_path="configs", config_name="gui", version_base=None)
+def main(cfg: DictConfig):
+    model = cfg.model
+    args = cfg.gui
+    safe_state(args.quiet)
+    feature_gaussians, background_color, background_feature = load_model(args, model)
+    GUI(args, feature_gaussians)
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="GUI script parameters")
-    lp = ModelParams(parser)
-    pp = PipelineParams(parser)
-    parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--classes", nargs="+", type=str, default=['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person'])
-    args = parser.parse_args()
-    safe_state(args.quiet)
-
-    main(lp.extract(args), pp.extract(args), args)
+    main()

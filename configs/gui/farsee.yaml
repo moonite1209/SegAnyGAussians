@@ -1,0 +1,2 @@
+quiet: false
+feature_point_cloud_path: '${base_path}/contrastive_feature_point_cloud.ply'
