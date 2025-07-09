@@ -721,37 +721,50 @@ class GaussianSplattingGUI:
 
 
 class GUI:
+    @property
+    def image_height(self):
+        return int(self.window_height)
+    @property
+    def image_width(self):
+        return int(self.window_width * 0.9)
+    
     def __init__(self, args, feature_gaussians):
+        self.window_height = args.window_height
+        self.window_width = args.window_width
         def save_callback():
             print("Save Clicked")
 
         dpg.create_context()
-        dpg.create_viewport(title='Viewer', vsync=True)
+        dpg.create_viewport(title='Viewer', vsync=True, width=self.window_width, height=self.window_height)
         dpg.setup_dearpygui()
 
-        with dpg.item_handler_registry(tag="handler") as handler:
-            dpg.add_item_resize_handler(callback=lambda s,a,u: print('resize',s,a,u,dpg.get_item_state(s),dpg.get_item_state(a),u))
-            # dpg.add_item_clicked_handler(callback=lambda s,a,u: print('click',s,a,u))
-            # dpg.add_item_visible_handler(callback=lambda s,a,u: print('visible',s,a,u))
-
         with dpg.texture_registry(show=False):
-            dpg.add_raw_texture(200, 100, np.random.randn(200,100,3).flatten(), format=dpg.mvFormat_Float_rgb, tag="texture", label='image')
+            dpg.add_dynamic_texture(self.image_width, self.image_height, np.random.randn(self.image_width,self.image_height,4).flatten(), tag="texture")
 
-        with dpg.window(tag="primary_window"):
+        with dpg.window(tag="primary_window", no_scrollbar=True):
             with dpg.group(horizontal=True):
-                dpg.add_image("texture", tag='image')
-                with dpg.group():
-                    dpg.add_text("Hello world")
-                    dpg.add_button(label="Save", callback=save_callback)
-                    dpg.add_input_text(label="string")
-                    dpg.add_slider_float(label="float")
-        dpg.bind_item_handler_registry("primary_window", "handler")
-        dpg.bind_item_handler_registry("image", "handler")
+                with dpg.group(width=self.image_width, height=self.image_height):
+                    dpg.add_image("texture", tag='image')
+                with dpg.group(width=self.window_width - self.image_width):
+                    dpg.add_listbox(['rgb', 'feature', 'cluster'], label='mode', tag='mode_selector', default_value='rgb')
+                    dpg.add_checkbox(label="Label")
+                    dpg.add_checkbox(label="Scale")
+                    dpg.add_checkbox(label="Opacity")
+                    dpg.add_checkbox(label="Weight")
         dpg.set_primary_window("primary_window", True)
+        dpg.bind_item_theme("primary_window", self.theme_no_padding())
 
         dpg.show_viewport()
         dpg.start_dearpygui()
         dpg.destroy_context()
+
+    def theme_no_padding(self):
+        with dpg.theme() as theme_no_padding:
+            with dpg.theme_component(dpg.mvAll):
+                dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 0, 0, category=dpg.mvThemeCat_Core)
+                dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0, category=dpg.mvThemeCat_Core)
+                dpg.add_theme_style(dpg.mvStyleVar_CellPadding, 0, 0, category=dpg.mvThemeCat_Core)
+        return theme_no_padding
 def load_model(args, model):
     feature_gaussians = FeatureGaussianModel(model.sh_degree, model.feature_dim)
     feature_gaussians.load_ply(args.feature_point_cloud_path)
