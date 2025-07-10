@@ -729,30 +729,57 @@ class GUI:
         return int(self.window_width * 0.9)
     
     def __init__(self, args, feature_gaussians):
+        self.feature_gaussians = feature_gaussians
         self.window_height = args.window_height
         self.window_width = args.window_width
-        def save_callback():
-            print("Save Clicked")
+        self.orbit_camera = OrbitCamera(self.image_width, self.image_height)
 
         dpg.create_context()
         dpg.create_viewport(title='Viewer', vsync=True, width=self.window_width, height=self.window_height)
         dpg.setup_dearpygui()
 
         with dpg.texture_registry(show=False):
-            dpg.add_dynamic_texture(self.image_width, self.image_height, np.random.randn(self.image_width,self.image_height,4).flatten(), tag="texture")
+            dpg.add_raw_texture(self.image_width, self.image_height, np.random.randn(self.image_width,self.image_height,3).flatten(), tag="texture", format=dpg.mvFormat_Float_rgb)
 
         with dpg.window(tag="primary_window", no_scrollbar=True):
             with dpg.group(horizontal=True):
-                with dpg.group(width=self.image_width, height=self.image_height):
+                with dpg.group(tag='group1'):
                     dpg.add_image("texture", tag='image')
-                with dpg.group(width=self.window_width - self.image_width):
+                with dpg.group(tag='group2'):
                     dpg.add_listbox(['rgb', 'feature', 'cluster'], label='mode', tag='mode_selector', default_value='rgb')
                     dpg.add_checkbox(label="Label")
                     dpg.add_checkbox(label="Scale")
                     dpg.add_checkbox(label="Opacity")
                     dpg.add_checkbox(label="Weight")
+                    dpg.add_listbox([], label='cluster', tag='cluster_selector', num_items=10)
         dpg.set_primary_window("primary_window", True)
         dpg.bind_item_theme("primary_window", self.theme_no_padding())
+
+        def mouse_wheel_handler(sender, app_data, user_data):
+            ...
+            # print('wheel', sender, app_data, user_data)
+        def mouse_click_handler(sender, app_data, user_data):
+            ...
+            # print('click', sender, app_data, user_data)
+        def mouse_move_handler(sender, app_data, user_data):
+            ...
+            # print('move', sender, app_data, user_data)
+        def mouse_drag_handler(sender, app_data, user_data):
+            print('drag', sender, app_data, user_data)
+        with dpg.handler_registry():
+            dpg.add_mouse_wheel_handler(callback=mouse_wheel_handler)
+            dpg.add_mouse_click_handler(dpg.mvMouseButton_Left, callback=mouse_click_handler)
+            dpg.add_mouse_drag_handler(dpg.mvMouseButton_Left, callback=mouse_drag_handler)
+            dpg.add_mouse_release_handler(dpg.mvMouseButton_Left, callback=mouse_click_handler)
+            dpg.add_mouse_click_handler(dpg.mvMouseButton_Middle, callback=mouse_click_handler)
+            dpg.add_mouse_release_handler(dpg.mvMouseButton_Middle, callback=mouse_click_handler)
+            dpg.add_mouse_move_handler(callback=mouse_move_handler)
+        def resize_handler(sender, app_data, user_data):
+            self.window_width, self.window_height = dpg.get_item_state(app_data)['rect_size']
+            self.update_item_size()
+        with dpg.item_handler_registry(tag='handlers'):
+            dpg.add_item_resize_handler(tag='resize_handler', callback=resize_handler)
+        dpg.bind_item_handler_registry("primary_window", "handlers")
 
         dpg.show_viewport()
         dpg.start_dearpygui()
@@ -765,6 +792,13 @@ class GUI:
                 dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0, category=dpg.mvThemeCat_Core)
                 dpg.add_theme_style(dpg.mvStyleVar_CellPadding, 0, 0, category=dpg.mvThemeCat_Core)
         return theme_no_padding
+    
+    def update_item_size(self):
+        dpg.configure_item("image", width=self.image_width, height=self.image_height)
+        dpg.configure_item("group2", width=self.window_width-self.image_height)
+
+    def render(self):
+        return np.random.randn(3,self.image_width,self.image_height)
 def load_model(args, model):
     feature_gaussians = FeatureGaussianModel(model.sh_degree, model.feature_dim)
     feature_gaussians.load_ply(args.feature_point_cloud_path)
