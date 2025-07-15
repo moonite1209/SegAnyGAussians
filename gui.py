@@ -13,7 +13,7 @@ from sklearn.decomposition import PCA
 from scene import GaussianModel, FeatureGaussianModel
 import dearpygui.dearpygui as dpg
 import math
-from scene.cameras import Camera
+from scene.cameras import Camera, MiniCamera
 from utils.general_utils import safe_state
 from utils.graphics_utils import focal2fov, fov2focal
 
@@ -151,23 +151,23 @@ class OrbitCamera:
         elif self.rot_mode == 0:    # rotate in camera coordinate system
             up = -self.up
             side = -self.right
-        rotvec_x = up * np.radians(0.01 * dx)
-        rotvec_y = side * np.radians(0.01 * dy)
+        rotvec_x = up * np.radians(dx)
+        rotvec_y = side * np.radians(dy)
 
         self.rot = R.from_rotvec(rotvec_x) * R.from_rotvec(rotvec_y) * self.rot
 
     def scale(self, delta):
         # self.radius *= 1.1 ** (-delta)    # non-linear version
-        self.radius -= 0.1 * delta      # linear version
+        self.radius -= delta      # linear version
 
     def pan(self, dx, dy, dz=0):
         
         if self.rot_mode == 1:
             # pan in camera coordinate system: project from [Coord_c] to [Coord_w]
-            self.center += 0.0005 * self.rot.as_matrix()[:3, :3] @ np.array([dx, -dy, dz])
+            self.center += self.rot.as_matrix()[:3, :3] @ np.array([dx, -dy, dz])
         elif self.rot_mode == 0:
             # pan in world coordinate system: at [Coord_w]
-            self.center += 0.0005 * np.array([-dx, dy, dz])
+            self.center += np.array([-dx, dy, dz])
 
 
 class GaussianSplattingGUI:
@@ -728,8 +728,11 @@ class GUI:
     def image_width(self):
         return int(self.window_width * 0.9)
     
-    def __init__(self, args, feature_gaussians):
+    def __init__(self, args, feature_gaussians, background_color, background_feature, pipe):
         self.feature_gaussians = feature_gaussians
+        self.background_color = background_color
+        self.background_feature = background_feature
+        self.pipe = pipe
         self.window_height = args.window_height
         self.window_width = args.window_width
         self.orbit_camera = OrbitCamera(self.image_width, self.image_height)
@@ -756,24 +759,68 @@ class GUI:
         dpg.bind_item_theme("primary_window", self.theme_no_padding())
 
         def mouse_wheel_handler(sender, app_data, user_data):
-            ...
-            # print('wheel', sender, app_data, user_data)
-        def mouse_click_handler(sender, app_data, user_data):
-            ...
-            # print('click', sender, app_data, user_data)
-        def mouse_move_handler(sender, app_data, user_data):
-            ...
-            # print('move', sender, app_data, user_data)
-        def mouse_drag_handler(sender, app_data, user_data):
-            print('drag', sender, app_data, user_data)
+            if not dpg.is_item_hovered('group1'):
+                return
+            delta = app_data
+            if delta == 0:
+                return
+            self.orbit_camera.scale(0.1*delta)
+            self.update_image()
+        def mouse_left_click_handler(sender, app_data, user_data):
+            if not dpg.is_item_hovered('group1'):
+                return
+            print('clicked')
+            user_data['is_clicked'] = True
+        def mouse_left_move_handler(sender, app_data, user_data):
+            if not dpg.is_item_hovered('group1') or not user_data['is_clicked']:
+                return
+            last_x, last_y = user_data['last_x'], user_data['last_y']
+            user_data['last_x'], user_data['last_y'] = app_data
+            if last_x is None or last_y is None:
+                return
+            x, y = app_data
+            dx, dy = x - last_x, y - last_y
+            if dx == 0 and dy == 0:
+                return
+            print(dx, dy)
+            self.orbit_camera.orbit(0.1*dx, -0.1*dy)
+            self.update_image()
+        def mouse_left_release_handler(sender, app_data, user_data):
+            print('released')
+            user_data['is_clicked'] = False
+            user_data['last_x'] = user_data['last_y'] = None
+        def mouse_middle_click_handler(sender, app_data, user_data):
+            if not dpg.is_item_hovered('group1'):
+                return
+            user_data['is_clicked'] = True
+        def mouse_middle_move_handler(sender, app_data, user_data):
+            if not dpg.is_item_hovered('group1') or not user_data['is_clicked']:
+                return
+            last_x, last_y = user_data['last_x'], user_data['last_y']
+            user_data['last_x'], user_data['last_y'] = app_data
+            if last_x is None or last_y is None:
+                return
+            x, y = app_data
+            dx, dy = x - last_x, y - last_y
+            if dx == 0 and dy == 0:
+                return
+            self.orbit_camera.pan(0.001*dx, -0.001*dy)
+            self.update_image()
+        def mouse_middle_release_handler(sender, app_data, user_data):
+            user_data['is_clicked'] = False
+            user_data['last_x'] = user_data['last_y'] = None
+
         with dpg.handler_registry():
             dpg.add_mouse_wheel_handler(callback=mouse_wheel_handler)
-            dpg.add_mouse_click_handler(dpg.mvMouseButton_Left, callback=mouse_click_handler)
-            dpg.add_mouse_drag_handler(dpg.mvMouseButton_Left, callback=mouse_drag_handler)
-            dpg.add_mouse_release_handler(dpg.mvMouseButton_Left, callback=mouse_click_handler)
-            dpg.add_mouse_click_handler(dpg.mvMouseButton_Middle, callback=mouse_click_handler)
-            dpg.add_mouse_release_handler(dpg.mvMouseButton_Middle, callback=mouse_click_handler)
-            dpg.add_mouse_move_handler(callback=mouse_move_handler)
+            left_status = {'is_clicked': False, 'last_x': None, 'last_y': None}
+            dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Left, callback=mouse_left_click_handler, user_data=left_status)
+            dpg.add_mouse_move_handler(callback=mouse_left_move_handler, user_data=left_status)
+            dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Left, callback=mouse_left_release_handler, user_data=left_status)
+            middle_status = {'is_clicked': False, 'last_x': None, 'last_y': None}
+            dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Middle, callback=mouse_middle_click_handler, user_data=middle_status)
+            dpg.add_mouse_move_handler(callback=mouse_middle_move_handler, user_data=middle_status)
+            dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Middle, callback=mouse_middle_release_handler, user_data=middle_status)
+            
         def resize_handler(sender, app_data, user_data):
             self.window_width, self.window_height = dpg.get_item_state(app_data)['rect_size']
             self.update_item_size()
@@ -797,8 +844,41 @@ class GUI:
         dpg.configure_item("image", width=self.image_width, height=self.image_height)
         dpg.configure_item("group2", width=self.window_width-self.image_height)
 
+    def update_image(self):
+        image = self.render()
+        dpg.set_value("texture", image.flatten())
+
+    def construct_camera(self) -> MiniCamera:
+        if self.orbit_camera.rot_mode == 1:
+            pose = self.orbit_camera.pose_movecenter
+        elif self.orbit_camera.rot_mode == 0:
+            pose = self.orbit_camera.pose_objcenter
+
+        R = pose[:3, :3]
+        t = pose[:3, 3]
+
+        ss = math.pi / 180.0
+        fovy = self.orbit_camera.fovy * ss
+
+        fy = fov2focal(fovy, self.image_height)
+        fovx = focal2fov(fy, self.image_width)
+
+        return MiniCamera(
+            colmap_id=0,
+            R=R,
+            T=t,
+            FoVx=fovx,
+            FoVy=fovy,
+            image_height=self.image_height,
+            image_width=self.image_width,
+            uid=0)
+
     def render(self):
-        return np.random.randn(3,self.image_width,self.image_height)
+        # return np.random.randn(self.image_height, self.image_width, 3)
+        camera = self.construct_camera()
+        camera.to('cuda')
+        rendered_image = render(camera, self.feature_gaussians, self.pipe, self.background_color)['render'].detach().cpu().permute(1,2,0).numpy()
+        return rendered_image
 def load_model(args, model):
     feature_gaussians = FeatureGaussianModel(model.sh_degree, model.feature_dim)
     feature_gaussians.load_ply(args.feature_point_cloud_path)
@@ -810,10 +890,12 @@ def load_model(args, model):
 @hydra.main(config_path="configs", config_name="gui", version_base=None)
 def main(cfg: DictConfig):
     model = cfg.model
+    dataset = cfg.dataset
+    pipe = cfg.pipe
     args = cfg.gui
     safe_state(args.quiet)
     feature_gaussians, background_color, background_feature = load_model(args, model)
-    GUI(args, feature_gaussians)
+    GUI(args, feature_gaussians, background_color, background_feature, pipe)
 
 if __name__ == "__main__":
     main()
