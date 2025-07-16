@@ -1,6 +1,9 @@
 # Borrowed from OmniSeg3D-GS (https://github.com/OceanYing/OmniSeg3D-GS)
+import json
 import torch
 import os
+
+from tqdm import tqdm
 from arguments import ModelParams, PipelineParams
 from gaussian_renderer import render, render_contrastive_feature
 from argparse import ArgumentParser
@@ -20,45 +23,7 @@ from utils.graphics_utils import focal2fov, fov2focal
 from scipy.spatial.transform import Rotation as R
 import hydra
 from omegaconf import DictConfig, OmegaConf
-
-
-def depth2img(depth):
-    depth = (depth-depth.min())/(depth.max()-depth.min() + 1e-7)
-    depth_img = cv2.applyColorMap((depth*255).astype(np.uint8),
-                                  cv2.COLORMAP_TURBO)
-    return depth_img
-
-class CONFIG:
-    r = 2   # scale ratio
-    window_width = int(2160/r)
-    window_height = int(1200/r)
-
-    width = int(2160/r)
-    height = int(1200/r)
-
-    radius = 2
-
-    debug = False
-    dt_gamma = 0.2
-
-    resolution = 1
-    data_device = 'cpu'
-
-    # gaussian model
-    sh_degree = 3
-
-    convert_SHs_python = False
-    compute_cov3D_python = False
-
-    white_background = False
-
-    feature_dim = 32
-    feature_pcd_path = ''
-    scene_pcd_path = ''
-    json_path = ''
-    pos_texts = ['chair', 'table', 'plant', 'flower', 'foliage', 'wall', 'floor', 'ceiling', 'person']
-    neg_texts = ["object", "things", "stuff", "texture"]
-
+from enum import Enum, Flag, auto
 
 class OrbitCamera:
     def __init__(self, W, H, r=2, fovy=60):
@@ -169,557 +134,16 @@ class OrbitCamera:
             # pan in world coordinate system: at [Coord_w]
             self.center += np.array([-dx, dy, dz])
 
-
-class GaussianSplattingGUI:
-    def __init__(self, opt, gaussian_model:GaussianModel, feature_gaussian_model:FeatureGaussianModel) -> None:
-        self.opt = opt
-
-        self.width = opt.width
-        self.height = opt.height
-        self.window_width = opt.window_width
-        self.window_height = opt.window_height
-        self.camera = OrbitCamera(opt.width, opt.height, r=opt.radius)
-
-        bg_color = [1, 1, 1] if opt.white_background else [0, 0, 0]
-        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-
-        bg_feature = [0 for i in range(opt.feature_dim)]
-        bg_feature = torch.tensor(bg_feature, dtype=torch.float32, device="cuda")
-
-        self.bg_color = background
-        self.bg_feature = bg_feature
-        self.render_buffer = np.zeros((self.width, self.height, 3), dtype=np.float32)
-        self.update_camera = True
-        self.dynamic_resolution = True
-        self.debug = opt.debug
-        self.engine = {
-            'scene': gaussian_model,
-            'feature': feature_gaussian_model,
-        }
-
-        self.cluster_point_colors = None
-        self.label_to_color = np.random.rand(1000, 3)
-        self.seg_score = None
-
-        self.proj_mat = None
-
-        self.load_model = False
-        print("loading model file...")
-        self.engine['scene'].load_ply(self.opt.scene_pcd_path)
-        self.engine['feature'].load_ply(self.opt.feature_pcd_path)
-        self.do_pca()   # calculate self.proj_mat
-        self.load_model = True
-        print("loading model file done.")
-
-        print("loading json file...")
-        import json
-        with open(self.opt.json_path, 'r') as f:
-            self.json = json.load(f)
-        self.cluster_point_colors = self.label_to_color[np.array(self.json['point_labels'])]
-        self.point_labels = torch.tensor(self.json['point_labels'])
-        self.is_big_gaussian = torch.tensor(self.json['is_big_gaussian'])
-        self.is_transparent_gaussian = torch.tensor(self.json['is_transparent_gaussian'])
-        self.contribute = torch.tensor(self.json['contribute'])
-        self.label = int(list(self.json['instances'].keys())[0])
-        print("loading json file done.")
-
-        # if opt.point_labels_path:
-        #     self.point_labels = torch.load(opt.point_labels_path)
-        #     self.label = torch.unique(self.point_labels).tolist()[0]
-        # if opt.langauge_features_path:
-        #     self.langauge_features = torch.load(opt.langauge_features_path)
-
-        self.mode = "image"  # choose from ['image', 'depth']
-
-        dpg.create_context()
-        self.register_dpg()
-
-        self.frame_id = 0
-
-        # --- for better operation --- #
-        self.moving = False
-        self.moving_middle = False
-        self.mouse_pos = (0, 0)
-
-        # --- for interactive segmentation --- #
-        self.img_mode = 0
-        self.clickmode_button = False
-        self.clickmode_multi_button = False     # choose multiple object 
-        self.new_click = False
-        self.prompt_num = 0
-        self.new_click_xy = []
-        self.clear_edit = False                 # clear all the click prompts
-        self.roll_back = False
-        self.preview = False    # binary segmentation mode
-        self.segment3d_flag = False
-        self.reload_flag = False        # reload the whole scene / point cloud
-        self.object_seg_id = 0          # to store the segmented object with increasing index order (path at: ./)
-        self.cluster_in_3D_flag = False
-
-        self.render_mode_rgb = False
-        self.render_mode_similarity = False
-        self.render_mode_pca = False
-        self.render_mode_cluster = False
-
-        self.render_filter_label = False
-        self.render_filter_scale = False
-        self.render_filter_opacity = False
-        self.render_filter_weight = False
-
-        self.save_flag = False
-    def __del__(self):
-        dpg.destroy_context()
-
-    def prepare_buffer(self, outputs):
-        if self.model == "images":
-            return outputs["render"]
-        else:
-            return np.expand_dims(outputs["depth"], -1).repeat(3, -1)
-    
-    def grayscale_to_colormap(self, gray):
-        """Convert a grayscale value to Jet colormap RGB values."""
-        # Ensure the grayscale values are in the range [0, 1]
-        # gray = np.clip(gray, 0, 1)
-
-        # Jet colormap ranges (these are normalized to [0, 1])
-        jet_colormap = np.array([
-            [0, 0, 0.5],
-            [0, 0, 1],
-            [0, 0.5, 1],
-            [0, 1, 1],
-            [0.5, 1, 0.5],
-            [1, 1, 0],
-            [1, 0.5, 0],
-            [1, 0, 0],
-            [0.5, 0, 0]
-        ])
-
-        # Corresponding positions for the colors in the colormap
-        positions = np.linspace(0, 1, jet_colormap.shape[0])
-
-        # Interpolate the RGB values based on the grayscale value
-        r = np.interp(gray, positions, jet_colormap[:, 0])
-        g = np.interp(gray, positions, jet_colormap[:, 1])
-        b = np.interp(gray, positions, jet_colormap[:, 2])
-
-        return np.stack((r, g, b), axis=-1)
-
-    def register_dpg(self):
-        
-        ### register texture
-        with dpg.texture_registry(show=False):
-            dpg.add_raw_texture(self.width, self.height, self.render_buffer, format=dpg.mvFormat_Float_rgb, tag="_texture")
-
-        ### register window
-        with dpg.window(tag="_primary_window", width=self.window_width+300, height=self.window_height):
-            dpg.add_image("_texture")   # add the texture
-
-        dpg.set_primary_window("_primary_window", True)
-
-        # def callback_depth(sender, app_data):
-            # self.img_mode = (self.img_mode + 1) % 4
-            
-        # --- interactive mode switch --- #
-        def clickmode_callback(sender):
-            self.clickmode_button = 1 - self.clickmode_button
-        def clickmode_multi_callback(sender):
-            self.clickmode_multi_button = dpg.get_value(sender)
-            print("clickmode_multi_button = ", self.clickmode_multi_button)
-        def preview_callback(sender):
-            self.preview = dpg.get_value(sender)
-            # print("binary_threshold_button = ", self.binary_threshold_button)
-        def clear_edit():
-            self.clear_edit = True
-        def roll_back():
-            self.roll_back = True
-        def callback_segment3d():
-            self.segment3d_flag = True
-        def callback_save():
-            self.save_flag = True
-        def callback_reload():
-            self.reload_flag = True
-        def callback_cluster():
-            self.cluster_in_3D_flag =True
-        def callback_label_change(sender, app_data, user_data):
-            self.label = int(list(self.json['instances'].keys())[(list(self.json['instances'].keys()).index(str(self.label))+user_data)%len(list(self.json['instances'].keys()))])
-            dpg.set_value('label', f"{self.label}:{self.json['instances'][str(self.label)]}")
-            self.engine['scene'].get_xyz[self.point_labels==self.label]
-        def callback_reshuffle_color():
-            self.label_to_color = np.random.rand(1000, 3)
-            try:
-                self.cluster_point_colors = self.label_to_color[self.seg_score.argmax(dim = -1).cpu().numpy()]
-                self.cluster_point_colors[self.seg_score.max(dim = -1)[0].detach().cpu().numpy() < 0.5] = (0,0,0)
-            except:
-                pass
-
-        def render_mode_rgb_callback(sender):
-            self.render_mode_rgb = not self.render_mode_rgb
-        def render_mode_similarity_callback(sender):
-            self.render_mode_similarity = not self.render_mode_similarity
-        def render_mode_pca_callback(sender):
-            self.render_mode_pca = not self.render_mode_pca
-        def render_mode_cluster_callback(sender):
-            self.render_mode_cluster = not self.render_mode_cluster
-
-        def render_filter_label_callback(sender):
-            self.render_filter_label = not self.render_filter_label
-        def render_filter_scale_callback(sender):
-            self.render_filter_scale = not self.render_filter_scale
-        def render_filter_opacity_callback(sender):
-            self.render_filter_opacity = not self.render_filter_opacity
-        def render_filter_weight_callback(sender):
-            self.render_filter_weight = not self.render_filter_weight
-        # control window
-        with dpg.window(label="Control", tag="_control_window", width=300, height=550, pos=[self.window_width+10, 0]):
-
-            dpg.add_text("Mouse position: click anywhere to start. ", tag="pos_item")
-            dpg.add_slider_float(label="ScoreThres", default_value=0.0,
-                                 min_value=0.0, max_value=1.0, tag="_ScoreThres")
-            # dpg.add_button(label="render_option", tag="_button_depth",
-                            # callback=callback_depth)
-            dpg.add_text("\nRender option: ", tag="render")
-            dpg.add_checkbox(label="RGB", callback=render_mode_rgb_callback, user_data="Some Data")
-            dpg.add_checkbox(label="PCA", callback=render_mode_pca_callback, user_data="Some Data")
-            dpg.add_checkbox(label="SIMILARITY", callback=render_mode_similarity_callback, user_data="Some Data")
-            dpg.add_checkbox(label="3D CLUSTER", callback=render_mode_cluster_callback, user_data="Some Data")
-            
-            dpg.add_text("\nFilter option: ", tag="filter")
-            dpg.add_checkbox(label="Label", callback=render_filter_label_callback, user_data="Some Data")
-            dpg.add_checkbox(label="Scale", callback=render_filter_scale_callback, user_data="Some Data")
-            dpg.add_checkbox(label="Opacity", callback=render_filter_opacity_callback, user_data="Some Data")
-            dpg.add_checkbox(label="Weight", callback=render_filter_weight_callback, user_data="Some Data")
-
-            dpg.add_text("\nSegment option: ", tag="seg")
-            dpg.add_checkbox(label="clickmode", callback=clickmode_callback, user_data="Some Data")
-            dpg.add_checkbox(label="multi-clickmode", callback=clickmode_multi_callback, user_data="Some Data")
-            dpg.add_checkbox(label="preview_segmentation_in_2d", callback=preview_callback, user_data="Some Data")
-            
-            dpg.add_text("\n")
-            dpg.add_button(label="segment3d", callback=callback_segment3d, user_data="Some Data")
-            dpg.add_button(label="roll_back", callback=roll_back, user_data="Some Data")
-            dpg.add_button(label="clear", callback=clear_edit, user_data="Some Data")
-            dpg.add_button(label="save as", callback=callback_save, user_data="Some Data")
-            dpg.add_input_text(label="", default_value="precomputed_mask", tag="save_name")
-            dpg.add_text("\n")
-
-            dpg.add_button(label="cluster3d", callback=callback_cluster, user_data="Some Data")
-            dpg.add_input_text(label='label', tag='label')
-            dpg.add_button(label="prev", callback=callback_label_change, user_data=-1)
-            dpg.add_button(label="next", callback=callback_label_change, user_data=1)
-            dpg.add_button(label="reshuffle_cluster_color", callback=callback_reshuffle_color, user_data="Some Data")
-            dpg.add_button(label="reload_data", callback=callback_reload, user_data="Some Data")
-
-        if self.debug:
-            with dpg.collapsing_header(label="Debug"):
-                dpg.add_separator()
-                dpg.add_text("Camera Pose:")
-                dpg.add_text(str(self.camera.pose), tag="_log_pose")
-
-
-        def callback_camera_wheel_scale(sender, app_data):
-            if not dpg.is_item_focused("_primary_window"):
-                return
-            delta = app_data
-            self.camera.scale(delta*5)
-            self.update_camera = True
-            if self.debug:
-                dpg.set_value("_log_pose", str(self.camera.pose))
-        
-
-        def toggle_moving_left():
-            self.moving = not self.moving
-
-
-        def toggle_moving_middle():
-            self.moving_middle = not self.moving_middle
-
-
-        def move_handler(sender, pos, user):
-            if self.moving and dpg.is_item_focused("_primary_window"):
-                dx = self.mouse_pos[0] - pos[0]
-                dy = self.mouse_pos[1] - pos[1]
-                if dx != 0.0 or dy != 0.0:
-                    self.camera.orbit(-dx*10, dy*10)
-                    self.update_camera = True
-
-            if self.moving_middle and dpg.is_item_focused("_primary_window"):
-                dx = self.mouse_pos[0] - pos[0]
-                dy = self.mouse_pos[1] - pos[1]
-                if dx != 0.0 or dy != 0.0:
-                    self.camera.pan(-dx*5, dy*5)
-                    self.update_camera = True
-            
-            self.mouse_pos = pos
-
-
-        def change_pos(sender, app_data):
-            # if not dpg.is_item_focused("_primary_window"):
-            #     return
-            xy = dpg.get_mouse_pos(local=False)
-            dpg.set_value("pos_item", f"Mouse position = ({xy[0]}, {xy[1]})")
-            if self.clickmode_button and app_data == 1:     # in the click mode and right click
-                print(xy)
-                self.new_click_xy = np.array(xy)
-                self.new_click = True
-
-
-        with dpg.handler_registry():
-            dpg.add_mouse_wheel_handler(callback=callback_camera_wheel_scale)
-            
-            dpg.add_mouse_click_handler(dpg.mvMouseButton_Left, callback=lambda:toggle_moving_left())
-            dpg.add_mouse_release_handler(dpg.mvMouseButton_Left, callback=lambda:toggle_moving_left())
-            dpg.add_mouse_click_handler(dpg.mvMouseButton_Middle, callback=lambda:toggle_moving_middle())
-            dpg.add_mouse_release_handler(dpg.mvMouseButton_Middle, callback=lambda:toggle_moving_middle())
-            dpg.add_mouse_move_handler(callback=lambda s, a, u:move_handler(s, a, u))
-            
-            dpg.add_mouse_click_handler(callback=change_pos)
-            
-        dpg.create_viewport(title="Gaussian-Splatting-Viewer", width=self.window_width+320, height=self.window_height, resizable=False)
-
-        ### global theme
-        with dpg.theme() as theme_no_padding:
-            with dpg.theme_component(dpg.mvAll):
-                # set all padding to 0 to avoid scroll bar
-                dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 0, 0, category=dpg.mvThemeCat_Core)
-                dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0, category=dpg.mvThemeCat_Core)
-                dpg.add_theme_style(dpg.mvStyleVar_CellPadding, 0, 0, category=dpg.mvThemeCat_Core)
-        dpg.bind_item_theme("_primary_window", theme_no_padding)
-
-        dpg.setup_dearpygui()
-
-        dpg.show_viewport()
-
-
-    def render(self):
-        while dpg.is_dearpygui_running():
-            # update texture every frame
-            # TODO : fetch rgb and depth
-            if self.load_model:
-                cam = self.construct_camera()
-                self.fetch_data(cam)
-            dpg.render_dearpygui_frame()
-
-
-    def construct_camera(
-        self,
-    ) -> Camera:
-        if self.camera.rot_mode == 1:
-            pose = self.camera.pose_movecenter
-        elif self.camera.rot_mode == 0:
-            pose = self.camera.pose_objcenter
-
-        R = pose[:3, :3]
-        t = pose[:3, 3]
-
-        ss = math.pi / 180.0
-        fovy = self.camera.fovy * ss
-
-        fy = fov2focal(fovy, self.height)
-        fovx = focal2fov(fy, self.width)
-
-        cam = Camera(
-            colmap_id=0,
-            R=R,
-            T=t,
-            FoVx=fovx,
-            FoVy=fovy,
-            image=torch.zeros([3, self.height, self.width]),
-            gt_alpha_mask=None,
-            image_name=None,
-            uid=0,
-        )
-        return cam
-    
-    def cluster_in_3D(self):
-        ...
-
-
-    def pca(self, X, n_components=3):
-        n = X.shape[0]
-        mean = torch.mean(X, dim=0)
-        X = X - mean
-        covariance_matrix = (1 / n) * torch.matmul(X.T, X).float()  # An old torch bug: matmul float32->float16, 
-        eigenvalues, eigenvectors = torch.linalg.eig(covariance_matrix)
-        eigenvalues = torch.norm(eigenvalues, dim=1)
-        idx = torch.argsort(-eigenvalues)
-        eigenvectors = eigenvectors[:, idx]
-        proj_mat = eigenvectors[:, 0:n_components]
-        
-        return proj_mat
-    
-
-    def do_pca(self):
-        sems = self.engine['feature'].get_instance_features.clone().squeeze()
-        N, C = sems.shape
-        randint = torch.randint(0, N, [200_000])
-        sems /= (torch.norm(sems, dim=1, keepdim=True) + 1e-6)
-        sem_chosen = sems[randint, :]
-        self.proj_mat = PCA(n_components=3)
-        self.proj_mat.fit(sem_chosen.detach().cpu())
-        print("project mat initialized !")
-
-
-    @torch.no_grad()
-    def fetch_data(self, view_camera):
-        filtered_mask = torch.zeros_like((self.is_big_gaussian))
-        if self.render_filter_label:
-            filtered_mask |= (~(self.point_labels==self.label))
-        if self.render_filter_scale:
-            filtered_mask |= self.is_big_gaussian
-        if self.render_filter_opacity:
-            filtered_mask |= self.is_transparent_gaussian
-        if self.render_filter_weight:
-            filtered_mask |= self.contribute<self.contribute.median()*10
-        scene_outputs = render(view_camera, self.engine['scene'], self.opt, self.bg_color, filtered_mask=filtered_mask)
-        feature_outputs = render_contrastive_feature(view_camera, self.engine['feature'], self.opt, self.bg_feature)
-        if self.cluster_in_3D_flag:
-            self.cluster_in_3D_flag = False
-            print("Clustering in 3D...")
-            self.cluster_in_3D()
-            print("Clustering finished.")
-        self.rendered_cluster = None if self.cluster_point_colors is None else render(view_camera, self.engine['scene'], self.opt, self.bg_color, override_color=torch.from_numpy(self.cluster_point_colors).cuda().float())["render"].permute(1, 2, 0)
-
-        # --- RGB image --- #
-        img = scene_outputs["render"].permute(1, 2, 0)  #
-
-        rgb_score = img.clone()
-        depth_score = rgb_score.cpu().numpy().reshape(-1)
-
-        # --- semantic image --- #
-        sems = feature_outputs["render"].permute(1, 2, 0)
-        H, W, C = sems.shape
-        sems /= (torch.norm(sems, dim=-1, keepdim=True) + 1e-6)
-        sem_transed = torch.from_numpy(self.proj_mat.transform(sems.flatten(0,1).detach().cpu())).cuda().reshape(H,W,-1)
-        sem_transed_rgb = torch.clip(sem_transed*0.5+0.5, 0, 1).float()
-        
-        if self.clear_edit:
-            self.new_click_xy = []
-            self.clear_edit = False
-            self.prompt_num = 0
-            try:
-                self.engine['scene'].clear_segment()
-                self.engine['feature'].clear_segment()
-            except:
-                pass
-
-        if self.roll_back:
-            self.new_click_xy = []
-            self.roll_back = False
-            self.prompt_num = 0
-            # try:
-            self.engine['scene'].roll_back()
-            self.engine['feature'].roll_back()
-            # except:
-                # pass
-        
-        if self.reload_flag:
-            self.reload_flag = False
-            print("loading model file...")
-            self.engine['scene'].load_ply(self.opt.scene_pcd_path)
-            self.engine['feature'].load_ply(self.opt.feature_pcd_path)
-            self.do_pca()   # calculate self.proj_mat
-            self.load_model = True
-
-        score_map = None
-        if len(self.new_click_xy) > 0:
-
-            featmap = sems.reshape(H, W, -1)
-            
-            if self.new_click:
-                xy = self.new_click_xy
-                new_feat = featmap[int(xy[1])%H, int(xy[0])%W, :].reshape(featmap.shape[-1], -1)
-                if (self.prompt_num == 0) or (self.clickmode_multi_button == False):
-                    self.chosen_feature = new_feat
-                else:
-                    self.chosen_feature = torch.cat([self.chosen_feature, new_feat], dim=-1)    # extend to get more prompt features
-                self.prompt_num += 1
-                self.new_click = False
-            
-            score_map = featmap @ self.chosen_feature
-            # print(score_map.shape, score_map.min(), score_map.max(), "score_map_shape")
-
-            score_map = (score_map + 1.0) / 2
-            score_binary = score_map > dpg.get_value('_ScoreThres')
-            
-            score_map[~score_binary] = 0.0
-            score_map = torch.max(score_map, dim=-1).values
-            score_norm = (score_map - dpg.get_value('_ScoreThres')) / (1 - dpg.get_value('_ScoreThres'))
-
-            if self.preview:
-                rgb_score = img * torch.max(score_binary, dim=-1, keepdim=True).values    # option: binary
-            else:
-                rgb_score = img
-            depth_score = 1 - torch.clip(score_norm, 0, 1)
-            depth_score = depth2img(depth_score.cpu().numpy()).astype(np.float32)/255.0
-
-            if self.segment3d_flag:
-                """ gaussian point cloud core params
-                self.engine._xyz            # (N, 3)
-                self.engine._features_dc    # (N, 1, 3)
-                self.engine._features_rest  # (N, 15, 3)
-                self.engine._opacity        # (N, 1)
-                self.engine._scaling        # (N, 3)
-                self.engine._rotation       # (N, 4)
-                self.engine._objects_dc     # (N, 1, 16)
-                """
-                self.segment3d_flag = False
-                feat_pts = self.engine['feature'].get_instance_features.squeeze()
-                score_pts = feat_pts @ self.chosen_feature
-                score_pts = (score_pts + 1.0) / 2
-                self.score_pts_binary = (score_pts > dpg.get_value('_ScoreThres')).sum(1) > 0
-
-                # save_path = "./debug_robot_{:0>3d}.ply".format(self.object_seg_id)
-                # try:
-                #     self.engine['scene'].roll_back()
-                #     self.engine['feature'].roll_back()
-                # except:
-                #     pass
-                self.engine['scene'].segment(self.score_pts_binary)
-                self.engine['feature'].segment(self.score_pts_binary)
-
-        if self.save_flag:
-            print("Saving ...")
-            self.save_flag = False
-            try:
-                os.makedirs("./segmentation_res", exist_ok=True)
-                save_mask = self.engine['scene']._mask == self.engine['scene'].segment_times + 1
-                torch.save(save_mask, f"./segmentation_res/{dpg.get_value('save_name')}.pt")
-            except:
-                with dpg.window(label="Tips"):
-                    dpg.add_text('You should segment the 3D object before save it (click segment3d first).')
-
-        self.render_buffer = None
-        render_num = 0
-        if self.render_mode_rgb or (not self.render_mode_pca and not self.render_mode_cluster and not self.render_mode_similarity):
-            self.render_buffer = rgb_score.cpu().numpy().reshape(-1)
-            render_num += 1
-        
-        if self.render_mode_pca:
-            self.render_buffer = sem_transed_rgb.cpu().numpy().reshape(-1) if self.render_buffer is None else self.render_buffer + sem_transed_rgb.cpu().numpy().reshape(-1)
-            render_num += 1
-        if self.render_mode_cluster:
-            if self.rendered_cluster is None:
-                self.render_buffer = rgb_score.cpu().numpy().reshape(-1) if self.render_buffer is None else self.render_buffer + rgb_score.cpu().numpy().reshape(-1)
-            else:
-                # print(f'self.rendered_cluster.shape={self.rendered_cluster.shape}') # [600, 1080, 3]
-                def filter2d(map: torch.Tensor):
-                    res = cv2.blur(map.cpu().numpy(), (5,5))
-                    return torch.from_numpy(res).cuda()
-                # self.rendered_cluster = filter2d(self.rendered_cluster)
-                self.render_buffer = self.rendered_cluster.cpu().numpy().reshape(-1) if self.render_buffer is None else self.render_buffer + self.rendered_cluster.cpu().numpy().reshape(-1)
-            render_num += 1
-        if self.render_mode_similarity:
-            if score_map is not None:
-                self.render_buffer = self.grayscale_to_colormap(score_map.squeeze().cpu().numpy()).reshape(-1).astype(np.float32) if self.render_buffer is None else self.render_buffer + self.grayscale_to_colormap(score_map.squeeze().cpu().numpy()).reshape(-1).astype(np.float32)
-            else:
-                self.render_buffer = rgb_score.cpu().numpy().reshape(-1) if self.render_buffer is None else self.render_buffer + rgb_score.cpu().numpy().reshape(-1)
-
-            render_num += 1
-        self.render_buffer /= render_num
-
-        dpg.set_value("_texture", self.render_buffer)
-
-
+class RenderMode(Enum):
+    rgb = auto()
+    feature = auto()
+    cluster = auto()
+class FilterMode(Flag):
+    none = 0
+    label = auto()
+    scale = auto()
+    opacity = auto()
+    weight = auto()
 class GUI:
     @property
     def image_height(self):
@@ -736,7 +160,26 @@ class GUI:
         self.window_height = args.window_height
         self.window_width = args.window_width
         self.orbit_camera = OrbitCamera(self.image_width, self.image_height)
+        self.should_update_image = True
+        self.render_mode = RenderMode.rgb
+        self.filter_mode = FilterMode.none
+        self.label = None
+        self.point_label, self.cluster_class = self.load_file(args.json_path)
 
+        self.construct_gui()
+        dpg.show_viewport()
+        # dpg.start_dearpygui()
+        while dpg.is_dearpygui_running():
+            self.before_render()
+            dpg.render_dearpygui_frame()
+        dpg.destroy_context()
+
+    def before_render(self):
+        if self.should_update_image:
+            self.update_image()
+            self.should_update_image = False
+
+    def construct_gui(self):
         dpg.create_context()
         dpg.create_viewport(title='Viewer', vsync=True, width=self.window_width, height=self.window_height)
         dpg.setup_dearpygui()
@@ -744,19 +187,57 @@ class GUI:
         with dpg.texture_registry(show=False):
             dpg.add_raw_texture(self.image_width, self.image_height, np.random.randn(self.image_width,self.image_height,3).flatten(), tag="texture", format=dpg.mvFormat_Float_rgb)
 
+        def render_mode_handler(sender, app_data, user_data):
+            print('render mode', sender, app_data, user_data)
+            if app_data == 'rgb':
+                self.render_mode = RenderMode.rgb
+            elif app_data == 'feature':
+                self.render_mode = RenderMode.feature
+            elif app_data == 'cluster':
+                self.render_mode = RenderMode.cluster
+        def filter_mode_handler(sender, app_data, user_data):
+            print('filter mode', sender, app_data, user_data)
+            if sender == 'label_checker':
+                if app_data:
+                    self.filter_mode |= FilterMode.label
+                else:
+                    self.filter_mode &= ~FilterMode.label
+            if sender == 'scale_checker':
+                if app_data:
+                    self.filter_mode |= FilterMode.scale
+                else:
+                    self.filter_mode &= ~FilterMode.scale
+            if sender == 'opacity_checker':
+                if app_data:
+                    self.filter_mode |= FilterMode.opacity
+                else:
+                    self.filter_mode &= ~FilterMode.opacity
+            if sender == 'weight_checker':
+                if app_data:
+                    self.filter_mode |= FilterMode.weight
+                else:
+                    self.filter_mode &= ~FilterMode.weight
+        def cluster_select_handler(sender, app_data, user_data):
+            print('cluster select', sender, app_data, user_data)
+            self.label = int(app_data.split(maxsplit=1)[0])
         with dpg.window(tag="primary_window", no_scrollbar=True):
             with dpg.group(horizontal=True):
                 with dpg.group(tag='group1'):
                     dpg.add_image("texture", tag='image')
                 with dpg.group(tag='group2'):
-                    dpg.add_listbox(['rgb', 'feature', 'cluster'], label='mode', tag='mode_selector', default_value='rgb')
-                    dpg.add_checkbox(label="Label")
-                    dpg.add_checkbox(label="Scale")
-                    dpg.add_checkbox(label="Opacity")
-                    dpg.add_checkbox(label="Weight")
-                    dpg.add_listbox([], label='cluster', tag='cluster_selector', num_items=10)
+                    dpg.add_listbox(['rgb', 'feature', 'cluster'], label='mode', tag='mode_selector', default_value='rgb', callback=render_mode_handler)
+                    dpg.add_checkbox(label="Label", tag='label_checker', callback=filter_mode_handler)
+                    dpg.add_checkbox(label="Scale", tag='scale_checker', callback=filter_mode_handler)
+                    dpg.add_checkbox(label="Opacity", tag='opacity_checker', callback=filter_mode_handler)
+                    dpg.add_checkbox(label="Weight", tag='weight_checker', callback=filter_mode_handler)
+                    dpg.add_listbox([f'{k} {v['class']}' for k,v in self.cluster_class.items()], label='cluster', tag='cluster_selector', num_items=10, callback=cluster_select_handler)
         dpg.set_primary_window("primary_window", True)
-        dpg.bind_item_theme("primary_window", self.theme_no_padding())
+        with dpg.theme() as theme_no_padding:
+            with dpg.theme_component(dpg.mvAll):
+                dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 0, 0, category=dpg.mvThemeCat_Core)
+                dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0, category=dpg.mvThemeCat_Core)
+                dpg.add_theme_style(dpg.mvStyleVar_CellPadding, 0, 0, category=dpg.mvThemeCat_Core)
+        dpg.bind_item_theme("primary_window", theme_no_padding)
 
         def mouse_wheel_handler(sender, app_data, user_data):
             if not dpg.is_item_hovered('group1'):
@@ -765,7 +246,8 @@ class GUI:
             if delta == 0:
                 return
             self.orbit_camera.scale(0.1*delta)
-            self.update_image()
+            self.should_update_image = True
+            # self.update_image()
         def mouse_left_click_handler(sender, app_data, user_data):
             if not dpg.is_item_hovered('group1'):
                 return
@@ -782,18 +264,18 @@ class GUI:
             dx, dy = x - last_x, y - last_y
             if dx == 0 and dy == 0:
                 return
-            print(dx, dy)
             self.orbit_camera.orbit(0.1*dx, -0.1*dy)
-            self.update_image()
+            self.should_update_image = True
+            # self.update_image()
         def mouse_left_release_handler(sender, app_data, user_data):
             print('released')
             user_data['is_clicked'] = False
             user_data['last_x'] = user_data['last_y'] = None
-        def mouse_middle_click_handler(sender, app_data, user_data):
+        def mouse_right_click_handler(sender, app_data, user_data):
             if not dpg.is_item_hovered('group1'):
                 return
             user_data['is_clicked'] = True
-        def mouse_middle_move_handler(sender, app_data, user_data):
+        def mouse_right_move_handler(sender, app_data, user_data):
             if not dpg.is_item_hovered('group1') or not user_data['is_clicked']:
                 return
             last_x, last_y = user_data['last_x'], user_data['last_y']
@@ -805,8 +287,9 @@ class GUI:
             if dx == 0 and dy == 0:
                 return
             self.orbit_camera.pan(0.001*dx, -0.001*dy)
-            self.update_image()
-        def mouse_middle_release_handler(sender, app_data, user_data):
+            self.should_update_image = True
+            # self.update_image()
+        def mouse_right_release_handler(sender, app_data, user_data):
             user_data['is_clicked'] = False
             user_data['last_x'] = user_data['last_y'] = None
 
@@ -816,10 +299,10 @@ class GUI:
             dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Left, callback=mouse_left_click_handler, user_data=left_status)
             dpg.add_mouse_move_handler(callback=mouse_left_move_handler, user_data=left_status)
             dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Left, callback=mouse_left_release_handler, user_data=left_status)
-            middle_status = {'is_clicked': False, 'last_x': None, 'last_y': None}
-            dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Middle, callback=mouse_middle_click_handler, user_data=middle_status)
-            dpg.add_mouse_move_handler(callback=mouse_middle_move_handler, user_data=middle_status)
-            dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Middle, callback=mouse_middle_release_handler, user_data=middle_status)
+            right_status = {'is_clicked': False, 'last_x': None, 'last_y': None}
+            dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Right, callback=mouse_right_click_handler, user_data=right_status)
+            dpg.add_mouse_move_handler(callback=mouse_right_move_handler, user_data=right_status)
+            dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Right, callback=mouse_right_release_handler, user_data=right_status)
             
         def resize_handler(sender, app_data, user_data):
             self.window_width, self.window_height = dpg.get_item_state(app_data)['rect_size']
@@ -828,18 +311,18 @@ class GUI:
             dpg.add_item_resize_handler(tag='resize_handler', callback=resize_handler)
         dpg.bind_item_handler_registry("primary_window", "handlers")
 
-        dpg.show_viewport()
-        dpg.start_dearpygui()
-        dpg.destroy_context()
 
-    def theme_no_padding(self):
-        with dpg.theme() as theme_no_padding:
-            with dpg.theme_component(dpg.mvAll):
-                dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 0, 0, category=dpg.mvThemeCat_Core)
-                dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0, category=dpg.mvThemeCat_Core)
-                dpg.add_theme_style(dpg.mvStyleVar_CellPadding, 0, 0, category=dpg.mvThemeCat_Core)
-        return theme_no_padding
-    
+    def load_file(self, path):
+        if not path:
+            return None, None
+        with open(path, 'r') as f:
+            file = json.load(f)
+        point_label = file.get('point_labels', None)
+        cluster_class = file.get('instances', None)
+        if cluster_class:
+            cluster_class = {int(k): v for k, v in cluster_class.items()}
+        return point_label, cluster_class
+
     def update_item_size(self):
         dpg.configure_item("image", width=self.image_width, height=self.image_height)
         dpg.configure_item("group2", width=self.window_width-self.image_height)
@@ -873,11 +356,24 @@ class GUI:
             image_width=self.image_width,
             uid=0)
 
+    def filter_mask(self, gaussians):
+        if self.filter_mode & FilterMode.label:
+            ...
+        if self.filter_mode & FilterMode.scale:
+            ...
+        if self.filter_mode & FilterMode.opacity:
+            ...
+        if self.filter_mode & FilterMode.weight:
+            ...
+        return gaussians
+
     def render(self):
-        # return np.random.randn(self.image_height, self.image_width, 3)
         camera = self.construct_camera()
         camera.to('cuda')
-        rendered_image = render(camera, self.feature_gaussians, self.pipe, self.background_color)['render'].detach().cpu().permute(1,2,0).numpy()
+        filter_mask = self.filter_mask(self.feature_gaussians)
+        with torch.inference_mode():
+            rendered_image = render(camera, self.feature_gaussians, self.pipe, self.background_color, filtered_mask=filter_mask)['render'].detach().permute(1,2,0).cpu().numpy()
+        torch.cuda.empty_cache()
         return rendered_image
 def load_model(args, model):
     feature_gaussians = FeatureGaussianModel(model.sh_degree, model.feature_dim)
