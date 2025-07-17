@@ -55,9 +55,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     means2D = screenspace_points
     opacity = pc.get_opacity
     if filtered_mask is not None:
-        new_opacity = opacity.detach().clone()
+        new_opacity = torch.ones_like(opacity)
         new_opacity[filtered_mask, :] = 0
-        new_opacity[~filtered_mask, :] = 1
+        new_opacity[~filtered_mask, :] = opacity[~filtered_mask, :]
         opacity = new_opacity
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
@@ -203,7 +203,7 @@ from diff_gaussian_rasterization_contrastive_f import GaussianRasterizationSetti
 from diff_gaussian_rasterization_contrastive_f import GaussianRasterizer as GaussianRasterizerContrastiveF
 from scene.feature_gaussian_model import FeatureGaussianModel
 
-def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, depth: torch.Tensor = None):
+def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, depth: torch.Tensor = None, filtered_mask = None):
     """
     Render the scene. 
     
@@ -242,6 +242,11 @@ def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity
+    if filtered_mask is not None:
+        new_opacity = torch.ones_like(opacity)
+        new_opacity[filtered_mask, :] = 0
+        new_opacity[~filtered_mask, :] = opacity[~filtered_mask, :]
+        opacity = new_opacity
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.

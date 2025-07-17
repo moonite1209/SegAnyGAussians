@@ -11,6 +11,7 @@ from argparse import ArgumentParser
 import numpy as np
 import cv2
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import minmax_scale
 
 # from scene.gaussian_model import GaussianModel
 from scene import GaussianModel, FeatureGaussianModel
@@ -24,6 +25,8 @@ from scipy.spatial.transform import Rotation as R
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from enum import Enum, Flag, auto
+
+from utils.visualization_utils import labels_to_color
 
 class OrbitCamera:
     def __init__(self, W, H, r=2, fovy=60):
@@ -165,6 +168,8 @@ class GUI:
         self.filter_mode = FilterMode.none
         self.label = None
         self.point_label, self.cluster_class = self.load_file(args.json_path)
+        self.pca = self.load_pca()
+        self.override_color = labels_to_color(torch.tensor(self.point_label)).to('cuda')
 
         self.construct_gui()
         dpg.show_viewport()
@@ -188,15 +193,14 @@ class GUI:
             dpg.add_raw_texture(self.image_width, self.image_height, np.random.randn(self.image_width,self.image_height,3).flatten(), tag="texture", format=dpg.mvFormat_Float_rgb)
 
         def render_mode_handler(sender, app_data, user_data):
-            print('render mode', sender, app_data, user_data)
             if app_data == 'rgb':
                 self.render_mode = RenderMode.rgb
             elif app_data == 'feature':
                 self.render_mode = RenderMode.feature
             elif app_data == 'cluster':
                 self.render_mode = RenderMode.cluster
+            self.should_update_image = True
         def filter_mode_handler(sender, app_data, user_data):
-            print('filter mode', sender, app_data, user_data)
             if sender == 'label_checker':
                 if app_data:
                     self.filter_mode |= FilterMode.label
@@ -217,9 +221,10 @@ class GUI:
                     self.filter_mode |= FilterMode.weight
                 else:
                     self.filter_mode &= ~FilterMode.weight
+            self.should_update_image = True
         def cluster_select_handler(sender, app_data, user_data):
-            print('cluster select', sender, app_data, user_data)
             self.label = int(app_data.split(maxsplit=1)[0])
+            self.should_update_image = True
         with dpg.window(tag="primary_window", no_scrollbar=True):
             with dpg.group(horizontal=True):
                 with dpg.group(tag='group1'):
@@ -230,7 +235,7 @@ class GUI:
                     dpg.add_checkbox(label="Scale", tag='scale_checker', callback=filter_mode_handler)
                     dpg.add_checkbox(label="Opacity", tag='opacity_checker', callback=filter_mode_handler)
                     dpg.add_checkbox(label="Weight", tag='weight_checker', callback=filter_mode_handler)
-                    dpg.add_listbox([f'{k} {v['class']}' for k,v in self.cluster_class.items()], label='cluster', tag='cluster_selector', num_items=10, callback=cluster_select_handler)
+                    dpg.add_listbox([f"{k} {v['class']}" for k,v in self.cluster_class.items()], label='cluster', tag='cluster_selector', num_items=10, callback=cluster_select_handler)
         dpg.set_primary_window("primary_window", True)
         with dpg.theme() as theme_no_padding:
             with dpg.theme_component(dpg.mvAll):
@@ -251,7 +256,6 @@ class GUI:
         def mouse_left_click_handler(sender, app_data, user_data):
             if not dpg.is_item_hovered('group1'):
                 return
-            print('clicked')
             user_data['is_clicked'] = True
         def mouse_left_move_handler(sender, app_data, user_data):
             if not dpg.is_item_hovered('group1') or not user_data['is_clicked']:
@@ -268,7 +272,6 @@ class GUI:
             self.should_update_image = True
             # self.update_image()
         def mouse_left_release_handler(sender, app_data, user_data):
-            print('released')
             user_data['is_clicked'] = False
             user_data['last_x'] = user_data['last_y'] = None
         def mouse_right_click_handler(sender, app_data, user_data):
@@ -311,6 +314,9 @@ class GUI:
             dpg.add_item_resize_handler(tag='resize_handler', callback=resize_handler)
         dpg.bind_item_handler_registry("primary_window", "handlers")
 
+    def load_pca(self):
+        pca = PCA(n_components=3)
+        return pca.fit(self.feature_gaussians.get_instance_features.detach().cpu().numpy())
 
     def load_file(self, path):
         if not path:
@@ -356,23 +362,32 @@ class GUI:
             image_width=self.image_width,
             uid=0)
 
-    def filter_mask(self, gaussians):
+    def filter_mask(self, gaussians: FeatureGaussianModel):
+        mask = torch.ones(gaussians.get_xyz.shape[0], dtype=torch.bool, device="cuda")
         if self.filter_mode & FilterMode.label:
-            ...
+            mask &= torch.tensor(self.point_label, dtype=torch.long, device="cuda")==self.label
         if self.filter_mode & FilterMode.scale:
-            ...
+            mask &= gaussians.get_scaling.max(dim=-1).values<gaussians.get_scaling.max(dim=-1).values.median()*0.8
         if self.filter_mode & FilterMode.opacity:
             ...
         if self.filter_mode & FilterMode.weight:
             ...
-        return gaussians
+        return mask
 
     def render(self):
         camera = self.construct_camera()
         camera.to('cuda')
         filter_mask = self.filter_mask(self.feature_gaussians)
         with torch.inference_mode():
-            rendered_image = render(camera, self.feature_gaussians, self.pipe, self.background_color, filtered_mask=filter_mask)['render'].detach().permute(1,2,0).cpu().numpy()
+            if self.render_mode == RenderMode.rgb:
+                rendered_image = render(camera, self.feature_gaussians, self.pipe, self.background_color, filtered_mask=~filter_mask)['render'].detach().permute(1,2,0).cpu().numpy()
+            elif self.render_mode == RenderMode.feature:
+                rendered_feature = render_contrastive_feature(camera, self.feature_gaussians, self.pipe, self.background_feature, filtered_mask=~filter_mask)['render'].detach().permute(1,2,0).cpu().numpy()
+                H,W,C = rendered_feature.shape
+                rendered_image = self.pca.transform(rendered_feature.reshape(-1,C))
+                rendered_image = minmax_scale(rendered_image, (0,1)).reshape(H,W,3)
+            elif self.render_mode == RenderMode.cluster:
+                rendered_image = render(camera, self.feature_gaussians, self.pipe, self.background_color, override_color=self.override_color, filtered_mask=~filter_mask)['render'].detach().permute(1,2,0).cpu().numpy()
         torch.cuda.empty_cache()
         return rendered_image
 def load_model(args, model):

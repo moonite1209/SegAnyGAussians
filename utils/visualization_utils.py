@@ -128,7 +128,7 @@ def features_to_color(features, use_pca = True):
     if C == 1:
         # === 标量强度：调用 intensity_to_color ===
         x = features.squeeze(1)
-        return intensity_to_color(x)
+        return scalar_to_color(x)
 
     elif C == 2:
         # === 将 2D 映射到 HSV 再转 RGB（保持空间结构） ===
