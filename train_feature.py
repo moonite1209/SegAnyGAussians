@@ -162,7 +162,7 @@ def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: 
     N,H,W = camera.original_masks.shape
     render_pkg = render_contrastive_feature(camera, feature_gaussians, pipe, background_feature)
     rendered_features = render_pkg["render"]
-    loss, intra_loss, inter_loss = calc_loss_mask_avg(args, camera.original_masks, rendered_features)
+    loss, intra_loss, inter_loss = calc_loss(args, camera.original_masks, rendered_features)
     loss.backward()
     batch_timing_end.record()
     feature_gaussians.optimizer.step()
@@ -184,8 +184,6 @@ def train_epoch(train_bar, train_dataloader, val_dataloader, scene, feature_gaus
                  get_depth_map = lambda viewpoint: render_with_depth(viewpoint, feature_gaussians, pipe, background)['depth'].detach())
 
 def training(model, dataset, pipe, args):
-
-
     feature_gaussians = FeatureGaussianModel(model.sh_degree, model.feature_dim)
     feature_gaussians.load_ply(args.point_cloud_path)
     feature_gaussians.eval()

@@ -26,21 +26,22 @@ def prepare_output_folder(args):
     os.makedirs(masks_path, exist_ok=True)
     labels_path = args.labels_path
     os.makedirs(labels_path, exist_ok=True)
-    progress_path = args.progress_path
-    os.makedirs(os.path.dirname(progress_path), exist_ok=True)
+    if args.progress_path:
+        os.makedirs(os.path.dirname(args.progress_path), exist_ok=True)
     if args.rgb_masks_path:
         os.makedirs(args.rgb_masks_path, exist_ok=True)
 def segment(args, sam_predictor: SamPredictor, image: np.ndarray, xyxy: np.ndarray) -> np.ndarray:
+    H,W,C = image.shape
     sam_predictor.set_image(image)
-    result_masks = []
+    result_masks = np.zeros((0,H,W), dtype='b1')
     for box in xyxy:
         masks, scores, logits = sam_predictor.predict(
             box=box,
             multimask_output=True
         )
         index = np.argmax(scores)
-        result_masks.append(masks[index])
-    return np.array(result_masks)
+        result_masks = np.concat([result_masks, masks[index][None]], axis=0)
+    return result_masks
 def rotate_detections_90_ccw(detections, image_width, image_height):
     # 提取原始检测框坐标
     x1, y1, x2, y2 = detections.xyxy.T
@@ -77,7 +78,7 @@ def object_detection(args, dino, image):
 @hydra.main(config_path="configs", config_name="segment", version_base=None)
 def main(cfg: DictConfig):
     args = cfg.segment
-    
+    prepare_output_folder(args)
     sam, dino = load_models(args)
 
     images_name = sorted([e for e in os.listdir(args.images_path) if e.endswith('.jpg')])
@@ -93,8 +94,8 @@ def main(cfg: DictConfig):
             rotated_image = cv2.resize(rotated_image,dsize=(rotated_image.shape[1] // args.downsample, rotated_image.shape[0] // args.downsample),fx=1,fy=1,interpolation=cv2.INTER_LINEAR)
 
         detections = object_detection(args, dino, rotated_image)
-        if detections.xyxy.shape[0] == 0:
-            continue
+        # if detections.xyxy.shape[0] == 0:
+        #     continue
 
         # convert detections to masks
         detections.mask = segment(
@@ -105,15 +106,16 @@ def main(cfg: DictConfig):
         )
 
         if args.downsample != 1 and args.downsample_type == 'mask':
-            mask_list=[]
+            H,W = rotated_image.shape[0] // args.downsample, rotated_image.shape[1] // args.downsample
+            mask_list = np.zeros((0,H,W), dtype='b1')
             for i, mask in enumerate(detections.mask):
                 mask_score = torch.from_numpy(mask).float()
                 mask_score = torch.nn.functional.interpolate(mask_score[None, None, ...], size=(rotated_image.shape[0] // args.downsample, rotated_image.shape[1] // args.downsample) , mode='bilinear', align_corners=False).squeeze()
                 mask_score[mask_score >= 0.5] = 1
                 mask_score[mask_score != 1] = 0
                 mask_score = mask_score.bool().numpy()
-                mask_list.append(mask_score)
-            detections.mask = np.stack(mask_list, axis=0)
+                mask_list = np.concat([mask_list, mask_score[None]], axis=0)
+            detections.mask = mask_list
 
         torch.save(torch.from_numpy(detections.mask).permute(0, 2, 1).flip(1), os.path.join(args.masks_path, f'{os.path.splitext(os.path.basename(image_name))[0]}.pt')) # bool[masks, h, w]
         torch.save(torch.from_numpy(detections.class_id), os.path.join(args.labels_path, f'{os.path.splitext(os.path.basename(image_name))[0]}.pt')) # int[masks]
