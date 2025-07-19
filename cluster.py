@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from scene import FeatureScene, FeatureGaussianModel
 from utils.general_utils import safe_state
 from torch.utils.data import DataLoader
-from sklearn.metrics.pairwise import pairwise_distances
+from sklearn.metrics.pairwise import pairwise_distances, cosine_similarity, pairwise_kernels
 from sklearn.preprocessing import minmax_scale, robust_scale, normalize
 from sklearn.cluster import HDBSCAN
 from sklearn.neighbors import KNeighborsClassifier
@@ -79,9 +79,9 @@ def assign_label(args, clusters, features, xyzs):
     label = np.array([cluster['label'] for cluster in clusters])
     feature_center = np.array([cluster['feature_center'] for cluster in clusters])
     xyz_center = np.array([cluster['xyz_center'] for cluster in clusters])
-    feature_distance_martix = pairwise_distances(features, feature_center, metric='cosine')
-    xyz_distance_martix = pairwise_distances(xyzs, xyz_center, metric='euclidean')
-    similarity = args.feature_ratio * softmax(distance_to_similarity(feature_distance_martix, 1/C), axis=1) + (1-args.feature_ratio) * softmax(distance_to_similarity(xyz_distance_martix, 1/D), axis=1)
+    feature_similarity_martix = (pairwise_kernels(features, feature_center, metric='cosine')+1)/2
+    xyz_similarity_martix = distance_to_similarity(pairwise_distances(xyzs, xyz_center, metric='euclidean'), 1/D)
+    similarity = args.feature_ratio * feature_similarity_martix + (1-args.feature_ratio) * xyz_similarity_martix
     labels = similarity.argmax(axis=1)
     is_valid = similarity.max(axis=1) > args.instance_threshold
     return np.where(is_valid, labels, -1)
@@ -108,10 +108,10 @@ def choose_class(classes, vote):
     vote, backgound_vote = vote[:-1], vote[-1]
     if vote.max() <= backgound_vote:
         return 'background'
-    return classes[vote.argmax()]
+    return classes[vote.argmax().item()]
 
 def assign_class(args, cluster_labels, cameras, feature_gaussians, pipe, background_color, background_feature):
-    cluster_to_class = {i.item(): np.zeros(len(args.classes)+1) for i in np.unique(cluster_labels) if i>=0}
+    cluster_to_class = {i.item(): np.zeros(len(args.classes)+1, dtype='i8') for i in np.unique(cluster_labels) if i>=0}
     for camera in tqdm(DataLoader(cameras, batch_size=None, shuffle=False, num_workers=os.cpu_count())):
         masks = camera.original_masks.numpy()
         background_mask = ~masks.any(axis = 0)
