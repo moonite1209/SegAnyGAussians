@@ -66,20 +66,20 @@ def calc_inter_mask_loss(point, inter_mask_point, rendered_features):
 def calc_loss(args, masks, rendered_features):
     N,H,W = masks.shape
     sample_point = extract_sample(H,W, args.sample_rate).to(masks.device)
-    point_in_mask = list(filter(lambda p: len(p)>0, groupby_mask(masks, sample_point)))
-    point_in_background = list(filter(lambda p: len(p)>0, groupby_mask(~masks.any(dim=0,keepdim=True), sample_point)))
-    intra_loss = torch.zeros(0, dtype=torch.float32, device='cuda')
-    inter_loss = torch.zeros(0, dtype=torch.float32, device='cuda')
+    point_in_mask = filter(lambda p: len(p)>0, groupby_mask(masks, sample_point))
+    point_in_background = filter(lambda p: len(p)>0, groupby_mask(~masks.any(dim=0,keepdim=True), sample_point))
+    intra_loss = []
+    inter_loss = []
     for intra_mask_point in point_in_mask:
         intra_point_loss = calc_intra_mask_loss(intra_mask_point, rendered_features)
-        intra_loss = torch.concat([intra_loss, intra_point_loss], dim=0)
-        inter_point_loss = torch.zeros(len(intra_mask_point),0, dtype=torch.float32, device='cuda')
+        intra_loss.append(intra_point_loss)
+        inter_point_loss = []
         for inter_mask_point in [*[p for p in point_in_mask if p is not intra_mask_point], *point_in_background]:
-            inter_point_loss = torch.concat([inter_point_loss, calc_inter_mask_loss(intra_mask_point, inter_mask_point, rendered_features)[:,None]], dim=1)
-        inter_point_loss = inter_point_loss.mean(dim=1)
-        inter_loss = torch.concat([inter_loss, inter_point_loss], dim=0)
-    intra_loss = intra_loss.mean(dim=0)
-    inter_loss = inter_loss.mean(dim=0)
+            inter_point_loss.append(calc_inter_mask_loss(intra_mask_point, inter_mask_point, rendered_features))
+        inter_point_loss = torch.stack(inter_point_loss, dim=1).mean(dim=1)
+        inter_loss.append(inter_point_loss)
+    intra_loss = torch.cat(intra_loss, dim=0).mean(dim=0)
+    inter_loss = torch.cat(inter_loss, dim=0).mean(dim=0)
     loss = intra_loss + inter_loss
     return loss, intra_loss.detach(), inter_loss.detach()
 
@@ -106,6 +106,29 @@ def calc_loss_mask_avg(args, masks, rendered_features):
     loss = intra_loss + inter_loss
     return loss, intra_loss.detach(), inter_loss.detach()
 
+def calc_InfoNCE_loss(args, masks, rendered_features):
+    N,H,W = masks.shape
+    background_mask = ~masks.any(dim=0)
+    background_mask_feature = F.normalize(rendered_features[:, background_mask].mean(dim=1), dim=0)
+    mask_features = []
+    for mask in masks:
+        mask_feature = F.normalize(rendered_features[:, mask].mean(dim=1), dim=0)
+        mask_features.append(mask_feature)
+        similarity = torch.einsum('ca, cb -> ab', rendered_features[:, mask], mask_feature[:,None].detach())
+    total_intra_item = []
+    total_inter_item = []
+    for mask, mask_feature in zip(masks, mask_features):
+        other_mask_features = [*[f for f in mask_features if f is not mask_feature], background_mask_feature]
+        positive_similarity = torch.einsum('ca, cb -> ab', rendered_features[:, mask], mask_feature[:,None].detach())
+        intra_item = torch.exp(positive_similarity)
+        total_intra_item.append(intra_item.squeeze(1))
+        negative_similarity = torch.einsum('ca, cb -> ab', rendered_features[:, mask], torch.stack(other_mask_features, dim=1).detach())
+        inter_item = torch.exp(negative_similarity).sum(dim=1, keepdim=True)
+        total_inter_item.append(inter_item.squeeze(1))
+    total_intra_item = torch.concat(total_intra_item, dim=0)
+    total_inter_item = torch.concat(total_inter_item, dim=0)
+    loss = -torch.log(total_intra_item/total_inter_item)
+    return loss.mean(dim=0), total_intra_item.mean(dim=0).detach(), total_inter_item.mean(dim=0).detach()
 
 def batch_report(tb_writer: SummaryWriter, iteration, feature_gaussians, loss, intra_loss, inter_loss, batch_time):
     if tb_writer is None:
@@ -164,7 +187,7 @@ def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: 
     camera.to('cuda')
     render_pkg = render_contrastive_feature(camera, feature_gaussians, pipe, background_feature)
     rendered_features = render_pkg["render"]
-    loss, intra_loss, inter_loss = calc_loss(args, camera.original_masks, rendered_features)
+    loss, intra_loss, inter_loss = calc_InfoNCE_loss(args, camera.original_masks, rendered_features)
     loss.backward()
     batch_timing_end.record()
     feature_gaussians.optimizer.step()
