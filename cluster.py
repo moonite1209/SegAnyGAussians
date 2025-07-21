@@ -113,6 +113,9 @@ def choose_class(classes, vote):
 def assign_class(args, cluster_labels, cameras, feature_gaussians, pipe, background_color, background_feature):
     cluster_to_class = {i.item(): np.zeros(len(args.classes)+1, dtype='i8') for i in np.unique(cluster_labels) if i>=0}
     for camera in tqdm(DataLoader(cameras, batch_size=None, shuffle=False, num_workers=os.cpu_count())):
+        N,H,W = camera.original_masks.shape
+        if N==0:
+            continue
         masks = camera.original_masks.numpy()
         background_mask = ~masks.any(axis = 0)
         class_labels = camera.labels.numpy()

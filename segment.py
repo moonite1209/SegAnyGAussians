@@ -118,7 +118,7 @@ def main(cfg: DictConfig):
             detections.mask = mask_list
 
         torch.save(torch.from_numpy(detections.mask).permute(0, 2, 1).flip(1), os.path.join(args.masks_path, f'{os.path.splitext(os.path.basename(image_name))[0]}.pt')) # bool[masks, h, w]
-        torch.save(torch.from_numpy(detections.class_id), os.path.join(args.labels_path, f'{os.path.splitext(os.path.basename(image_name))[0]}.pt')) # int[masks]
+        torch.save(torch.tensor(detections.class_id, dtype=torch.int64), os.path.join(args.labels_path, f'{os.path.splitext(os.path.basename(image_name))[0]}.pt')) # int[masks]
 
         if args.rgb_masks_path:
             box_annotator = sv.BoxAnnotator()
