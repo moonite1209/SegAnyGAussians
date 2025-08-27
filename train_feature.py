@@ -187,7 +187,7 @@ def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: 
     camera.to('cuda')
     render_pkg = render_contrastive_feature(camera, feature_gaussians, pipe, background_feature)
     rendered_features = render_pkg["render"]
-    loss, intra_loss, inter_loss = calc_InfoNCE_loss(args, camera.original_masks, rendered_features)
+    loss, intra_loss, inter_loss = calc_loss_mask_avg(args, camera.original_masks, rendered_features)
     loss.backward()
     batch_timing_end.record()
     feature_gaussians.optimizer.step()
