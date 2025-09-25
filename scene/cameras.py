@@ -46,7 +46,7 @@ class MiniCamera:
 
 class Camera(MiniCamera):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
-                 image_name, uid, cx = None, cy = None, masks = None, labels = None,
+                 image_name, uid, cx = None, cy = None, masks = None, labels = None, depth_map=None, confidence_map=None,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0):
         super().__init__(colmap_id, R, T, FoVx, FoVy, image.shape[1], image.shape[2], uid, cx, cy, trans, scale)
 
@@ -54,6 +54,8 @@ class Camera(MiniCamera):
         self.original_image = image.clamp(0.0, 1.0)
         self.original_masks = masks
         self.labels = labels
+        self.depth_map = depth_map
+        self.confidence_map = confidence_map
 
         if gt_alpha_mask is not None:
             self.original_image *= gt_alpha_mask
@@ -68,6 +70,8 @@ class Camera(MiniCamera):
         super().to(device)
         self.original_image = self.original_image.to(device)
         self.original_masks = self.original_masks.to(device)
+        self.depth_map = self.depth_map.to(device)
+        self.confidence_map = self.confidence_map.to(device)
 
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):

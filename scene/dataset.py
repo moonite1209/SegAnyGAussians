@@ -16,4 +16,5 @@ class CameraDataset(Dataset):
     
     def __getitem__(self, idx):
         camera_info = self.camera_infos[idx]
-        return loadCam(self.resolution, idx, camera_info, self.resolution_scale)
+        camera = loadCam(self.resolution, idx, camera_info, self.resolution_scale)
+        return camera

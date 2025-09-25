@@ -38,6 +38,8 @@ class CameraInfo(NamedTuple):
     height: int
     masks_path: str
     labels_path: str
+    depth_path: str
+    confidence_path: str
     cx: float = None
     cy: float = None
 
@@ -71,7 +73,7 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folder = None, labels_folder = None):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folder = None, labels_folder = None, depth_folder = None):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -123,8 +125,12 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folde
         labels_path = os.path.join(labels_folder, image_name_noext + ".pt") \
             if labels_folder else None
 
+        depth_path = os.path.join(depth_folder, image_name_noext.split('-')[-1] + "_smoothDepth.dmb") \
+            if depth_folder else None
+        confidence_path = os.path.join(depth_folder, image_name_noext.split('-')[-1] + "_confidence.dmb") \
+            if depth_folder else None
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image_path=image_path, masks_path=masks_path, labels_path=labels_path,
+        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image_path=image_path, masks_path=masks_path, labels_path=labels_path, depth_path=depth_path, confidence_path=confidence_path,
                             image_name=image_name_noext, width=width, height=height, cx=cx, cy=cy)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
@@ -157,7 +163,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(sparse_path, images_path, masks_path, labels_path, eval = False, llffhold = 8):
+def readColmapSceneInfo(sparse_path, images_path, masks_path, labels_path, depth_path, eval = False, llffhold = 8):
     try:
         cameras_extrinsic_file = os.path.join(sparse_path, "images.bin")
         cameras_intrinsic_file = os.path.join(sparse_path, "cameras.bin")
@@ -169,7 +175,7 @@ def readColmapSceneInfo(sparse_path, images_path, masks_path, labels_path, eval 
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=images_path, masks_folder=masks_path, labels_folder=labels_path)
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=images_path, masks_folder=masks_path, labels_folder=labels_path, depth_folder=depth_path)
 
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
