@@ -135,8 +135,7 @@ def loadCam(resolution, id, cam_info, resolution_scale):
         resized_depth_map = F.interpolate(
             depth_map.unsqueeze(0),
             size=(resized_h, resized_w),  # (H, W)
-            mode='bilinear',
-            align_corners=False
+            mode='nearest',
         ).squeeze(0)
         depth_map = resized_depth_map
     else:
@@ -146,8 +145,7 @@ def loadCam(resolution, id, cam_info, resolution_scale):
         resized_conf_map = F.interpolate(
             conf_map.unsqueeze(0),
             size=(resized_h, resized_w),  # (H, W)
-            mode='bilinear',
-            align_corners=False
+            mode='nearest',
         ).squeeze(0)
         conf_map = resized_conf_map
     else:
