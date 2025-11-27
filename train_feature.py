@@ -13,7 +13,7 @@ import os
 from typing import List
 import torch
 from random import randint
-from gaussian_renderer import render, render_contrastive_feature, render_with_depth, render_with_max_contributor
+from gaussian_renderer import render, render_contrastive_feature, render_with_depth, render_with_max_contributor, render_semantic_feature
 import sys
 from scene import FeatureScene, FeatureGaussianModel
 from scene.cameras import Camera
@@ -130,6 +130,33 @@ def calc_InfoNCE_loss(args, masks, rendered_features):
     loss = -torch.log(total_intra_item/total_inter_item)
     return loss.mean(dim=0), total_intra_item.mean(dim=0).detach(), total_inter_item.mean(dim=0).detach()
 
+def calc_semantic_loss(args, masks, labels, label_features, rendered_features):
+    N, H, W = masks.shape
+    C, D = label_features.shape  # D 应为 32
+    assert D == rendered_features.shape[0], "Feature dimension mismatch"
+    assert labels.max() < C and labels.min() >= 0, "Label out of range"
+
+    # 获取每个样本对应的语义特征 [N, 32]
+    selected_label_features = label_features[labels]  # shape: [N, 32]
+
+    # 扩展为 [N, 32, H, W] 以与 rendered_features 对齐
+    target_features = selected_label_features.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, H, W)
+
+    # 将 rendered_features 扩展为 [N, 32, H, W]
+    rendered_expanded = rendered_features.unsqueeze(0).expand(N, -1, -1, -1)
+
+    # 计算 L1 loss
+    l1_loss = torch.abs(rendered_expanded - target_features)  # [N, 32, H, W]
+
+    # 应用 mask：只在 mask 为 True 的位置计算 loss
+    mask_expanded = masks.unsqueeze(1).expand_as(l1_loss)  # [N, 32, H, W]
+    masked_loss = l1_loss[mask_expanded]
+
+    # 返回平均 loss
+    if masked_loss.numel() == 0:
+        return torch.tensor(0.0, device=l1_loss.device, requires_grad=True)
+    return masked_loss.mean()
+
 def batch_report(tb_writer: SummaryWriter, iteration, feature_gaussians, loss, intra_loss, inter_loss, batch_time):
     if tb_writer is None:
         return
@@ -186,8 +213,12 @@ def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: 
         return
     camera.to('cuda')
     render_pkg = render_contrastive_feature(camera, feature_gaussians, pipe, background_feature)
-    rendered_features = render_pkg["render"]
-    loss, intra_loss, inter_loss = calc_loss_mask_avg(args, camera.original_masks, rendered_features)
+    rendered_contrastive_features = render_pkg["render"]
+    contrastive_loss, intra_loss, inter_loss = calc_loss_mask_avg(args, camera.original_masks, rendered_contrastive_features)
+    render_semantic_pkg = render_semantic_feature(camera, feature_gaussians, pipe, background_feature)
+    rendered_semantic_features = render_semantic_pkg["render"]
+    semantic_loss = calc_semantic_loss(args, camera.original_masks, camera.labels, camera.label_features, rendered_semantic_features)
+    loss = contrastive_loss+semantic_loss
     loss.backward()
     batch_timing_end.record()
     feature_gaussians.optimizer.step()
@@ -213,6 +244,7 @@ def training(model, dataset, pipe, args):
     feature_gaussians.load_ply(args.point_cloud_path)
     feature_gaussians.eval()
     feature_gaussians._instance_feature.requires_grad_()
+    feature_gaussians._semantic_feature.requires_grad_()
     feature_gaussians.training_setup(args)
 
     background = torch.tensor([1.]*3 if model.white_background else [0.]*3, dtype=torch.float32, device="cuda")

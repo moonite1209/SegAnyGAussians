@@ -1,5 +1,5 @@
-classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting']
-selected_classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'keyboard', 'door', 'window', 'lighting']
+classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
+selected_classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
 feature_point_cloud_path: '${base_path}/contrastive_feature_point_cloud.ply'
 json_path: '${base_path}/output.json'
 progress_path: null

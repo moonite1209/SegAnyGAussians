@@ -7,6 +7,7 @@ import torchvision
 from tqdm import tqdm
 from argparse import ArgumentParser
 import numpy as np
+import hashlib
 from segment_anything import (SamAutomaticMaskGenerator, SamPredictor,
                               sam_model_registry)
 from groundingdino.util.inference import Model
@@ -75,11 +76,36 @@ def object_detection(args, dino, image):
     detections.class_id = detections.class_id[nms_idx]
     return detections
 
+def class_to_feature(classes, dim=32, device='cpu'):
+    ...
+def words_to_tensors(word_list, dim=32, device='cpu'):
+    """使用正弦余弦函数生成确定性向量"""
+    vectors = torch.zeros((len(word_list), dim), device=device)
+    
+    for i, word in enumerate(word_list):
+        hash_val = int(hashlib.md5(word.encode()).hexdigest()[:8], 16)
+        np.random.seed(hash_val)
+        
+        frequencies = np.random.randn(dim // 2) * 10
+        phases = np.random.rand(dim // 2) * 2 * np.pi
+        
+        for j in range(dim // 2):
+            vectors[i, 2*j] = torch.tensor(np.sin(frequencies[j] + phases[j]))
+            vectors[i, 2*j + 1] = torch.tensor(np.cos(frequencies[j] + phases[j]))
+    
+    # 添加归一化步骤
+    norms = torch.norm(vectors, p=2, dim=1, keepdim=True)
+    normalized_vectors = vectors / norms
+    
+    return normalized_vectors
+
 @hydra.main(config_path="configs", config_name="segment", version_base=None)
 def main(cfg: DictConfig):
     args = cfg.segment
     prepare_output_folder(args)
     sam, dino = load_models(args)
+
+    torch.save(words_to_tensors(args.classes), os.path.join(args.labels_path, f'label_features.pt'))
 
     images_name = sorted([e for e in os.listdir(args.images_path) if e.endswith('.jpg')])
     progress_bar = tqdm(images_name)

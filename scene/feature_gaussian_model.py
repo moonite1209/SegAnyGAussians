@@ -30,12 +30,15 @@ class FeatureGaussianModel(GaussianModel):
     def setup_functions(self):
         super().setup_functions()
         self.instance_feature_activation = F.normalize
+        self.semantic_feature_activation = F.normalize
 
 
-    def __init__(self, sh_degree: int,  instance_feature_dim: int = 0):
+    def __init__(self, sh_degree: int, instance_feature_dim: int = 32, semantic_feature_dim: int = 32):
         super().__init__(sh_degree)
         self.instance_feature_dim = instance_feature_dim
         self._instance_feature = torch.empty(0)
+        self.semantic_feature_dim = semantic_feature_dim
+        self._semantic_feature = torch.empty(0)
     def capture(self):
         return (
             self.active_sh_degree,
@@ -46,6 +49,7 @@ class FeatureGaussianModel(GaussianModel):
             self._rotation,
             self._opacity,
             self._instance_feature,
+            self._semantic_feature,
             self.max_radii2D,
             self.xyz_gradient_accum,
             self.denom,
@@ -62,6 +66,7 @@ class FeatureGaussianModel(GaussianModel):
         self._rotation, 
         self._opacity,
         self._instance_feature,
+        self._semantic_feature,
         self.max_radii2D, 
         xyz_gradient_accum, 
         denom,
@@ -78,11 +83,15 @@ class FeatureGaussianModel(GaussianModel):
         return self.instance_feature_activation(self._instance_feature)
     
     @property
+    def get_semantic_features(self):
+        return self.semantic_feature_activation(self._instance_feature)
+    
+    @property
     def get_std(self):
         return torch.abs(self._std)
     
     def parameters(self):
-        return [*super().parameters(), self._instance_feature, self._std]
+        return [*super().parameters(), self._instance_feature, self._semantic_feature, self._std]
 
     def create_from_pcd(self, path, spatial_lr_scale : float):
         pcd = fetchPly(path)
@@ -103,6 +112,7 @@ class FeatureGaussianModel(GaussianModel):
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
         instance_feature = torch.randn((fused_point_cloud.shape[0], self.instance_feature_dim), dtype=torch.float, device="cuda")
+        semantic_feature = torch.randn((fused_point_cloud.shape[0], self.semantic_feature_dim), dtype=torch.float, device="cuda")
 
         self._xyz = nn.Parameter(fused_point_cloud)
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous())
@@ -111,6 +121,7 @@ class FeatureGaussianModel(GaussianModel):
         self._rotation = nn.Parameter(rots)
         self._opacity = nn.Parameter(opacities)
         self._instance_feature == nn.Parameter(instance_feature)
+        self._semantic_feature == nn.Parameter(semantic_feature)
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def training_setup(self, training_args):
@@ -121,6 +132,7 @@ class FeatureGaussianModel(GaussianModel):
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
             {'params': [self._instance_feature], 'lr': training_args.instance_feature_lr, "name": "instance_feature"},
+            {'params': [self._semantic_feature], 'lr': training_args.semantic_feature_lr, "name": "semantic_feature"},
             {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
             {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
@@ -149,6 +161,8 @@ class FeatureGaussianModel(GaussianModel):
             l.append('rot_{}'.format(i))
         for i in range(self._instance_feature.shape[1]):
             l.append('instance_feature_{}'.format(i))
+        for i in range(self._semantic_feature.shape[1]):
+            l.append('semantic_feature_{}'.format(i))
         return l
 
     def save_ply(self, path):
@@ -159,6 +173,7 @@ class FeatureGaussianModel(GaussianModel):
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         instance_feature = self._instance_feature.detach().contiguous().cpu().numpy()
+        semantic_feature = self._semantic_feature.detach().contiguous().cpu().numpy()
         
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
@@ -167,7 +182,7 @@ class FeatureGaussianModel(GaussianModel):
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, instance_feature), axis=1)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, instance_feature, semantic_feature), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
@@ -219,6 +234,12 @@ class FeatureGaussianModel(GaussianModel):
         for idx, attr_name in enumerate(instance_feature_name):
             instance_feature[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
+        semantic_feature_name = [p.name for p in plydata.elements[0].properties if p.name.startswith("semantic_feature_")]
+        semantic_feature_name = sorted(semantic_feature_name, key = lambda x: int(x.split('_')[-1]))
+        semantic_feature = np.random.randn(xyz.shape[0], self.semantic_feature_dim)
+        for idx, attr_name in enumerate(semantic_feature_name):
+            semantic_feature[:, idx] = np.asarray(plydata.elements[0][attr_name])
+
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda"))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous())
         self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous())
@@ -226,6 +247,7 @@ class FeatureGaussianModel(GaussianModel):
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda"))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda"))
         self._instance_feature = nn.Parameter(torch.tensor(instance_feature, dtype=torch.float, device="cuda").contiguous())
+        self._semantic_feature = nn.Parameter(torch.tensor(semantic_feature, dtype=torch.float, device="cuda").contiguous())
         self._std = nn.Parameter(torch.tensor((0.05), dtype=torch.float, device="cuda"))
 
         self.active_sh_degree = self.max_sh_degree
@@ -244,19 +266,21 @@ class FeatureGaussianModel(GaussianModel):
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
         self._instance_feature = optimizable_tensors["instance_feature"]
+        self._semantic_feature = optimizable_tensors["semantic_feature"]
 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
 
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_instance_feature):
+    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_instance_feature, new_semantic_feature):
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
         "opacity": new_opacities,
         "scaling" : new_scaling,
         "rotation" : new_rotation,
-        "instance_feature" : new_instance_feature}
+        "instance_feature" : new_instance_feature,
+        "semantic_feature" : new_semantic_feature}
 
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
         self._xyz = optimizable_tensors["xyz"]
@@ -266,6 +290,7 @@ class FeatureGaussianModel(GaussianModel):
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
         self._instance_feature = optimizable_tensors["instance_feature"]
+        self._semantic_feature = optimizable_tensors["semantic_feature"]
 
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -291,8 +316,9 @@ class FeatureGaussianModel(GaussianModel):
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
         new_instance_feature = self._instance_feature[selected_pts_mask].repeat(N,1)
+        new_semantic_feature = self._semantic_feature[selected_pts_mask].repeat(N,1)
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_instance_feature)
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_instance_feature, new_semantic_feature)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
@@ -310,5 +336,6 @@ class FeatureGaussianModel(GaussianModel):
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
         new_instance_feature = self._instance_feature[selected_pts_mask]
+        new_semantic_feature = self._semantic_feature[selected_pts_mask]
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_instance_feature)
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_instance_feature, new_semantic_feature)
