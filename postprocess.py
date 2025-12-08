@@ -50,7 +50,7 @@ safe_state(args.quiet)
 
 bg_color = torch.tensor([1,1,1] if args.white_background else [0, 0, 0], dtype=torch.float32, device="cuda")
 
-feat_gs_model = FeatureGaussianModel(args.sh_degree, args.feature_dim)
+feat_gs_model = FeatureGaussianModel(args.sh_degree, args.instance_feature_dim, args.semantic_feature_dim)
 feat_gs_model.load_ply(args.contrastive_feature_point_cloud_path)
 try:
     cameras = readColmapCameras(read_extrinsics_binary(os.path.join(args.sparse_path, 'images.bin')), 

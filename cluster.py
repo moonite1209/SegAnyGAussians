@@ -27,11 +27,11 @@ def uniform_sample(N, n_samples):
     return mask
 
 def load_model(args, model):
-    feature_gaussians = FeatureGaussianModel(model.sh_degree, model.feature_dim)
+    feature_gaussians = FeatureGaussianModel(model.sh_degree, model.instance_feature_dim, model.semantic_feature_dim)
     feature_gaussians.load_ply(args.feature_point_cloud_path)
     feature_gaussians.eval()
     background_color = torch.tensor([1.]*3 if model.white_background else [0.]*3, dtype=torch.float32, device="cuda")
-    background_feature = torch.tensor([0.]*model.feature_dim, dtype=torch.float32, device="cuda")
+    background_feature = torch.tensor([0.]*model.instance_feature_dim, dtype=torch.float32, device="cuda")
     return feature_gaussians, background_color, background_feature
 
 def load_cameras(dataset):
@@ -133,10 +133,70 @@ def assign_class(args, cluster_labels, cameras, feature_gaussians, pipe, backgro
     cluster_to_class = {k: choose_class(args.classes, v) for k, v in cluster_to_class.items()}
     return cluster_to_class
 
+def assign_class_semantic(args, cluster_labels, cameras, feature_gaussians, pipe, background_color, background_feature):
+    lbl_feats_np = torch.load(args.features_path, weights_only=True).numpy()
+    pt_feats_np = feature_gaussians.get_semantic_features.detach().cpu().numpy() # 或者是直接用变量名
+    cluster_ids_np = cluster_labels # 已经是 numpy 了
+    # ==========================================
+    # 2. 计算每个簇的中心特征 (Cluster Centroids)
+    # ==========================================
+    unique_clusters = np.unique(cluster_ids_np)
+    cluster_centers = []
+    valid_cluster_ids = []
+
+    print(f"正在计算 {len(unique_clusters)} 个簇的中心特征...")
+
+    for cid in unique_clusters:
+        # 找到属于当前簇 cid 的所有点的索引
+        mask = (cluster_ids_np == cid)
+        
+        # 取出对应的特征向量
+        cluster_points = pt_feats_np[mask]
+        
+        # 计算均值作为该簇的代表特征
+        # axis=0 表示沿着列方向求平均，结果 shape 为 (32,)
+        mean_feat = np.mean(cluster_points, axis=0)
+        
+        cluster_centers.append(mean_feat)
+        valid_cluster_ids.append(cid)
+
+    cluster_centers = np.array(cluster_centers) # Shape: [Num_Clusters, 32]
+
+    # ==========================================
+    # 3. 计算相似度并分配标签 (Cosine Similarity)
+    # ==========================================
+    # 为了计算余弦相似度，我们需要先对向量进行归一化 (L2 Norm)
+    # 归一化后：A . B = cos(theta)
+
+    # 对 label features 进行归一化
+    lbl_norm = np.linalg.norm(lbl_feats_np, axis=1, keepdims=True)
+    lbl_feats_normalized = lbl_feats_np / (lbl_norm + 1e-8) # 加 1e-8 防止除零
+
+    # 对 cluster centers 进行归一化
+    ctr_norm = np.linalg.norm(cluster_centers, axis=1, keepdims=True)
+    centers_normalized = cluster_centers / (ctr_norm + 1e-8)
+
+    # 计算相似度矩阵: [Num_Clusters, 32] @ [32, 22] -> [Num_Clusters, 22]
+    similarity_matrix = centers_normalized @ lbl_feats_normalized.T
+
+    # 找到每个簇最相似的 label 索引 (axis=1 表示在每一行中找最大值的索引)
+    assigned_label_indices = np.argmax(similarity_matrix, axis=1)
+
+    # ==========================================
+    # 4. 结果整理
+    # ==========================================
+    # 创建一个字典映射: Cluster_ID -> Label_Index
+    cluster_to_label_map = {
+        cid: args.classes[lbl_idx.item()]
+        for cid, lbl_idx in zip(valid_cluster_ids, assigned_label_indices)
+    }
+    return cluster_to_label_map
+
 def output_json(args, labels, classes, **kwargs):
     output = {}
     output['point_labels'] = labels
-    instances = {str(cluster): {'class': klass} for cluster, klass in classes.items() if klass in args.selected_classes}
+    # instances = {str(cluster): {'class': klass} for cluster, klass in classes.items() if klass in args.selected_classes}
+    instances = {str(cluster): {'class': klass} for cluster, klass in classes.items()}
     output['instances'] = instances
     for k, v in kwargs:
         output[k] = v
@@ -164,9 +224,9 @@ def main(cfg: DictConfig):
     feature_gaussians, background_color, background_feature = load_model(args, model)
     cameras = load_cameras(dataset)
     features = torch.concat((feature_gaussians.get_instance_features, feature_gaussians.get_semantic_features), dim=1).cpu().numpy()
-    features = feature_gaussians.get_semantic_features.cpu().numpy()
+    # features = feature_gaussians.get_semantic_features.cpu().numpy()
     labels = clustering(args, features, feature_gaussians.get_xyz.cpu().numpy())
-    cluster_to_class = assign_class(args, labels, cameras, feature_gaussians, pipe, background_color, background_feature)
+    cluster_to_class = assign_class_semantic(args, labels, cameras, feature_gaussians, pipe, background_color, background_feature)
     output_json(args, labels.tolist(), cluster_to_class)
     clean(args)
 

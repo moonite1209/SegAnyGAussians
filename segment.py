@@ -103,9 +103,9 @@ def words_to_tensors(word_list, dim=32, device='cpu'):
 def main(cfg: DictConfig):
     args = cfg.segment
     prepare_output_folder(args)
+    torch.save(words_to_tensors(args.classes), os.path.join(args.labels_path, f'label_features.pt'))
     sam, dino = load_models(args)
 
-    torch.save(words_to_tensors(args.classes), os.path.join(args.labels_path, f'label_features.pt'))
 
     images_name = sorted([e for e in os.listdir(args.images_path) if e.endswith('.jpg')])
     progress_bar = tqdm(images_name)

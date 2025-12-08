@@ -5,7 +5,7 @@ import os
 
 from tqdm import tqdm
 from arguments import ModelParams, PipelineParams
-from gaussian_renderer import render, render_contrastive_feature
+from gaussian_renderer import render, render_contrastive_feature, render_semantic_feature
 from argparse import ArgumentParser
 # from gaussian_renderer import GaussianModel
 import numpy as np
@@ -140,6 +140,7 @@ class OrbitCamera:
 class RenderMode(Enum):
     rgb = auto()
     feature = auto()
+    semantic_feature = auto()
     cluster = auto()
 class FilterMode(Flag):
     none = 0
@@ -197,6 +198,8 @@ class GUI:
                 self.render_mode = RenderMode.rgb
             elif app_data == 'feature':
                 self.render_mode = RenderMode.feature
+            elif app_data == 'semantic_feature':
+                self.render_mode = RenderMode.semantic_feature
             elif app_data == 'cluster':
                 self.render_mode = RenderMode.cluster
             self.should_update_image = True
@@ -230,7 +233,7 @@ class GUI:
                 with dpg.group(tag='group1'):
                     dpg.add_image("texture", tag='image')
                 with dpg.group(tag='group2'):
-                    dpg.add_listbox(['rgb', 'feature', 'cluster'], label='mode', tag='mode_selector', default_value='rgb', callback=render_mode_handler)
+                    dpg.add_listbox(['rgb', 'feature', 'semantic_feature', 'cluster'], label='mode', tag='mode_selector', default_value='rgb', callback=render_mode_handler)
                     dpg.add_checkbox(label="Label", tag='label_checker', callback=filter_mode_handler)
                     dpg.add_checkbox(label="Scale", tag='scale_checker', callback=filter_mode_handler)
                     dpg.add_checkbox(label="Opacity", tag='opacity_checker', callback=filter_mode_handler)
@@ -386,16 +389,21 @@ class GUI:
                 H,W,C = rendered_feature.shape
                 rendered_image = self.pca.transform(rendered_feature.reshape(-1,C))
                 rendered_image = minmax_scale(rendered_image, (0,1)).reshape(H,W,3)
+            elif self.render_mode == RenderMode.semantic_feature:
+                rendered_feature = render_semantic_feature(camera, self.feature_gaussians, self.pipe, self.background_feature, filtered_mask=~filter_mask)['render'].detach().permute(1,2,0).cpu().numpy()
+                H,W,C = rendered_feature.shape
+                rendered_image = self.pca.transform(rendered_feature.reshape(-1,C))
+                rendered_image = minmax_scale(rendered_image, (0,1)).reshape(H,W,3)
             elif self.render_mode == RenderMode.cluster:
                 rendered_image = render(camera, self.feature_gaussians, self.pipe, self.background_color, override_color=self.override_color, filtered_mask=~filter_mask)['render'].detach().permute(1,2,0).cpu().numpy()
         torch.cuda.empty_cache()
         return rendered_image
 def load_model(args, model):
-    feature_gaussians = FeatureGaussianModel(model.sh_degree, model.feature_dim)
+    feature_gaussians = FeatureGaussianModel(model.sh_degree, model.instance_feature_dim, model.semantic_feature_dim)
     feature_gaussians.load_ply(args.feature_point_cloud_path)
     feature_gaussians.eval()
     background_color = torch.tensor([1.]*3 if model.white_background else [0.]*3, dtype=torch.float32, device="cuda")
-    background_feature = torch.tensor([0.]*model.feature_dim, dtype=torch.float32, device="cuda")
+    background_feature = torch.tensor([0.]*model.instance_feature_dim, dtype=torch.float32, device="cuda")
     return feature_gaussians, background_color, background_feature
 
 @hydra.main(config_path="configs", config_name="gui", version_base=None)

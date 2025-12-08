@@ -84,7 +84,7 @@ class FeatureGaussianModel(GaussianModel):
     
     @property
     def get_semantic_features(self):
-        return self.semantic_feature_activation(self._instance_feature)
+        return self.semantic_feature_activation(self._semantic_feature)
     
     @property
     def get_std(self):

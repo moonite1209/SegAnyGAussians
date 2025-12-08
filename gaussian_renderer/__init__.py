@@ -315,8 +315,8 @@ def render_semantic_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe, b
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=pipe.debug,
-        # depth = render_with_depth(viewpoint_camera, pc, pipe)['depth'].detach(),
-        depth = viewpoint_camera.depth_map,
+        depth = render_with_depth(viewpoint_camera, pc, pipe)['depth'].detach(),
+        # depth = viewpoint_camera.depth_map,
     )
 
     rasterizer = GaussianRasterizerContrastiveF(raster_settings=raster_settings)

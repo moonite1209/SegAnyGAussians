@@ -240,7 +240,7 @@ def train_epoch(train_bar, train_dataloader, val_dataloader, scene, feature_gaus
                  get_depth_map = lambda viewpoint: render_with_depth(viewpoint, feature_gaussians, pipe, background)['depth'].detach())
 
 def training(model, dataset, pipe, args):
-    feature_gaussians = FeatureGaussianModel(model.sh_degree, model.feature_dim)
+    feature_gaussians = FeatureGaussianModel(model.sh_degree, model.instance_feature_dim, model.semantic_feature_dim)
     feature_gaussians.load_ply(args.point_cloud_path)
     feature_gaussians.eval()
     feature_gaussians._instance_feature.requires_grad_()
@@ -248,7 +248,7 @@ def training(model, dataset, pipe, args):
     feature_gaussians.training_setup(args)
 
     background = torch.tensor([1.]*3 if model.white_background else [0.]*3, dtype=torch.float32, device="cuda")
-    background_feature = torch.tensor([0.]*model.feature_dim, dtype=torch.float32, device="cuda")
+    background_feature = torch.tensor([0.]*model.instance_feature_dim, dtype=torch.float32, device="cuda")
 
     scene = FeatureScene(dataset)
 
