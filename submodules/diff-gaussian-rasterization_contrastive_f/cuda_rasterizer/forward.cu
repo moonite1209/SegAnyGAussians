@@ -344,7 +344,8 @@ renderCUDA(
 			if (power > 0.0f)
 				continue;
 
-			const float depth_weight = exp(-(depths[collected_id[j]] - mean)*(depths[collected_id[j]] - mean) / (2 * std_value * std_value));
+			// const float depth_weight = exp(-(depths[collected_id[j]] - mean)*(depths[collected_id[j]] - mean) / (2 * std_value * std_value));
+			const float depth_weight = 1.0f;
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.

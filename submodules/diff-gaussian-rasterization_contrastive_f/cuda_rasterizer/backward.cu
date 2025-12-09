@@ -503,7 +503,8 @@ renderCUDA(
 				continue;
 
 			const float G = exp(power);
-			const float depth_weight = exp(-(depths[collected_id[j]] - mean)*(depths[collected_id[j]] - mean) / (2 * std_value * std_value));
+			// const float depth_weight = exp(-(depths[collected_id[j]] - mean)*(depths[collected_id[j]] - mean) / (2 * std_value * std_value));
+			const float depth_weight = 1.0f;
 			const float alpha = min(0.99f, con_o.w * G * depth_weight);
 			if (alpha < 1.0f / 255.0f)
 				continue;
