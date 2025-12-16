@@ -40,7 +40,7 @@ def load_cameras(dataset):
 
 def get_sample_mask(total_num, sample_num):
     if sample_num < 0:
-        sampled_mask = np.random.rand(total_num) > 0.98
+        sampled_mask = np.random.rand(total_num) > 0.9
     else:
         sampled_mask = uniform_sample(total_num, sample_num)
     return sampled_mask, sampled_mask.sum().item()
@@ -91,18 +91,39 @@ def labels_postprocess(args, xyzs, labels):
     knn.fit(xyzs, labels)
     return knn.predict(xyzs)
 
-def clustering(args, raw_features: np.ndarray, raw_xyzs: np.ndarray):
+def clustering(args, raw_features: np.ndarray, raw_xyzs: np.ndarray, class_masks: np.ndarray):
     P, C = raw_features.shape
     assert raw_xyzs.shape[0] == P and raw_xyzs.shape[1] == 3
-    sample_mask, sample_num = get_sample_mask(P, args.sample_num)
-    features = feature_preprocess(raw_features)
-    xyzs = xyz_preprocess(raw_xyzs)
-    sample_features = features[sample_mask]
-    sample_xyzs = xyzs[sample_mask]
-    clusters = hybird_clustering(args, sample_features, sample_xyzs)
-    labels = assign_label(args, clusters, features, xyzs)
-    labels = labels_postprocess(args, xyzs, labels)
+    labels = np.full((P,), -1, dtype='i8')
+    base_label = 0
+    for label_mask, class_id in zip(class_masks, range(class_masks.shape[0])):
+        masked_raw_features = raw_features[label_mask]
+        masked_raw_xyzs = raw_xyzs[label_mask]
+        if masked_raw_features.shape[0] == 0:
+            continue
+        sample_mask, sample_num = get_sample_mask(masked_raw_features.shape[0], args.sample_num)
+        masked_features = feature_preprocess(masked_raw_features)
+        masked_xyzs = xyz_preprocess(masked_raw_xyzs)
+        sample_features = masked_features[sample_mask]
+        sample_xyzs = masked_xyzs[sample_mask]
+        masked_clusters = hybird_clustering(args, sample_features, sample_xyzs)
+        if len(masked_clusters) == 0:
+            continue
+        masked_labels = assign_label(args, masked_clusters, masked_features, masked_xyzs)
+        masked_labels = labels_postprocess(args, masked_xyzs, masked_labels)
+        labels[label_mask] = np.where(masked_labels>=0, masked_labels + base_label, -1)
+        base_label += len(masked_clusters)
     return labels
+
+    # sample_mask, sample_num = get_sample_mask(P, args.sample_num)
+    # features = feature_preprocess(raw_features)
+    # xyzs = xyz_preprocess(raw_xyzs)
+    # sample_features = features[sample_mask]
+    # sample_xyzs = xyzs[sample_mask]
+    # clusters = hybird_clustering(args, sample_features, sample_xyzs)
+    # labels = assign_label(args, clusters, features, xyzs)
+    # labels = labels_postprocess(args, xyzs, labels)
+    # return labels
 
 def choose_class(classes, vote):
     vote, backgound_vote = vote[:-1], vote[-1]
@@ -213,6 +234,23 @@ def clean(args):
     if os.path.isfile(args.feature_point_cloud_path):
         os.remove(args.feature_point_cloud_path)
 
+def calc_class_masks(args, dataset, feature_gaussians):
+    label_features = torch.load(os.path.join(dataset.labels_path, 'label_features.pt'), weights_only=True).numpy()
+    P, C = feature_gaussians.shape
+    L, D = label_features.shape
+    assert C == D
+    similarity = (feature_gaussians @ label_features.T)  # (P, L)
+    # class_masks shape is [L, P]
+    # gaussian i 属于 class j 当且仅当 similarity[i, j] 是该行的最大值且大于 threshold
+    max_idx = similarity.argmax(axis=1)  # (P,)
+    max_values = similarity.max(axis=1)  # (P,)
+    class_masks = []
+    for class_id in range(L):
+        class_mask = (max_idx == class_id) & (max_values >= 0.25)
+        class_masks.append(class_mask)
+    class_masks = np.stack(class_masks, axis=0)  # (L, P)
+    return class_masks
+
 @hydra.main(config_path="configs", config_name="clustering", version_base=None)
 def main(cfg: DictConfig):
     model = cfg.model
@@ -223,9 +261,10 @@ def main(cfg: DictConfig):
     safe_state(args.quiet)
     feature_gaussians, background_color, background_feature = load_model(args, model)
     cameras = load_cameras(dataset)
+    class_masks = calc_class_masks(args, dataset, feature_gaussians.get_semantic_features.cpu().numpy())
     features = torch.concat((feature_gaussians.get_instance_features, feature_gaussians.get_semantic_features), dim=1).cpu().numpy()
     # features = feature_gaussians.get_semantic_features.cpu().numpy()
-    labels = clustering(args, features, feature_gaussians.get_xyz.cpu().numpy())
+    labels = clustering(args, features, feature_gaussians.get_xyz.cpu().numpy(), class_masks)
     cluster_to_class = assign_class_semantic(args, labels, cameras, feature_gaussians, pipe, background_color, background_feature)
     output_json(args, labels.tolist(), cluster_to_class)
     clean(args)
