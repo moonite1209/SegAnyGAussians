@@ -40,7 +40,7 @@ def load_cameras(dataset):
 
 def get_sample_mask(total_num, sample_num):
     if sample_num < 0:
-        sampled_mask = np.random.rand(total_num) > 0.9
+        sampled_mask = np.random.rand(total_num) > 0.95
     else:
         sampled_mask = uniform_sample(total_num, sample_num)
     return sampled_mask, sampled_mask.sum().item()
