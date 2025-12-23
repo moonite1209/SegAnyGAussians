@@ -19,6 +19,7 @@ from sklearn.neighbors import KNeighborsClassifier
 from scipy.special import softmax
 import hydra
 from omegaconf import DictConfig
+import open3d as o3d
 
 def uniform_sample(N, n_samples):
     selected_indices = np.random.permutation(N)[:n_samples]
@@ -40,7 +41,7 @@ def load_cameras(dataset):
 
 def get_sample_mask(total_num, sample_num):
     if sample_num < 0:
-        sampled_mask = np.random.rand(total_num) > 0.95
+        sampled_mask = np.random.rand(total_num) > 0.97
     else:
         sampled_mask = uniform_sample(total_num, sample_num)
     return sampled_mask, sampled_mask.sum().item()
@@ -50,12 +51,20 @@ def feature_preprocess(features):
 def xyz_preprocess(xyz):
     return robust_scale(xyz)
 
-def hybird_clustering(args, features, xyzs):
-    feature_distance_martix = pairwise_distances(features, metric='cosine')
-    xyz_distance_martix = pairwise_distances(xyzs, metric='euclidean')
-    distance_martix = args.feature_ratio*feature_distance_martix + (1-args.feature_ratio)*xyz_distance_martix
-    clusterer = HDBSCAN(min_cluster_size=10, cluster_selection_epsilon=0.01, allow_single_cluster = False, metric='precomputed', n_jobs=-1)
-    sample_labels = clusterer.fit_predict(distance_martix)
+def hybird_clustering(args, instance_features, semantic_features, xyzs):
+    
+    # Compute distance matrices for instance and semantic features separately
+    instance_distance_matrix = pairwise_distances(instance_features, metric='cosine')
+    semantic_distance_matrix = pairwise_distances(semantic_features, metric='cosine')
+    
+    # Get feature ratios from args
+    
+    xyz_distance_matrix = pairwise_distances(xyzs, metric='euclidean')
+    distance_matrix = args.instance_feature_ratio * instance_distance_matrix + args.semantic_feature_ratio * semantic_distance_matrix + args.xyz_feature_ratio * xyz_distance_matrix
+    
+    clusterer = HDBSCAN(min_cluster_size=10, cluster_selection_epsilon=0.01, allow_single_cluster=False, metric='precomputed', n_jobs=-1)
+    sample_labels = clusterer.fit_predict(distance_matrix)
+    
     clusters = []
     for label in np.unique(sample_labels):
         if label == -3:
@@ -63,25 +72,40 @@ def hybird_clustering(args, features, xyzs):
         elif label == -2:
             assert False
         elif label == -1:
-            ...
+            continue
         else:
-            feature_center = normalize(features[sample_labels==label].mean(axis=0, keepdims=True)).squeeze(0)
-            xyz_center = xyzs[sample_labels==label].mean(axis=0)
-            clusters.append({"label": label, "feature_center": feature_center, "xyz_center": xyz_center})
+            # Compute centers for instance and semantic features separately
+            instance_center = normalize(instance_features[sample_labels == label].mean(axis=0, keepdims=True)).squeeze(0)
+            semantic_center = normalize(semantic_features[sample_labels == label].mean(axis=0, keepdims=True)).squeeze(0)
+            xyz_center = xyzs[sample_labels == label].mean(axis=0)
+            
+            # Store centers separately
+            clusters.append({"label": label, "instance_feature_center": instance_center, "semantic_feature_center": semantic_center, "xyz_center": xyz_center})
     return clusters
 
 def distance_to_similarity(distance, gamma):
     return np.exp(-distance*gamma)
 
-def assign_label(args, clusters, features, xyzs):
-    P, C = features.shape
+def assign_label(args, clusters, instance_features, semantic_features, xyzs):
+    P, C_instance = instance_features.shape
+    P, C_semantic = semantic_features.shape
     P, D = xyzs.shape
     label = np.array([cluster['label'] for cluster in clusters])
-    feature_center = np.array([cluster['feature_center'] for cluster in clusters])
+    
+    # Extract separate feature centers
+    instance_center = np.array([cluster['instance_feature_center'] for cluster in clusters])
+    semantic_center = np.array([cluster['semantic_feature_center'] for cluster in clusters])
     xyz_center = np.array([cluster['xyz_center'] for cluster in clusters])
-    feature_similarity_martix = (pairwise_kernels(features, feature_center, metric='cosine')+1)/2
-    xyz_similarity_martix = distance_to_similarity(pairwise_distances(xyzs, xyz_center, metric='euclidean'), 1/D)
-    similarity = args.feature_ratio * feature_similarity_martix + (1-args.feature_ratio) * xyz_similarity_martix
+    
+    # Compute similarity matrices for instance and semantic features separately
+    instance_similarity_matrix = (pairwise_kernels(instance_features, instance_center, metric='cosine') + 1) / 2
+    semantic_similarity_matrix = (pairwise_kernels(semantic_features, semantic_center, metric='cosine') + 1) / 2
+    
+    xyz_similarity_matrix = distance_to_similarity(pairwise_distances(xyzs, xyz_center, metric='euclidean'), 1/D)
+    
+    # Get feature ratios from args
+    similarity = args.instance_feature_ratio * instance_similarity_matrix + args.semantic_feature_ratio * semantic_similarity_matrix + args.xyz_feature_ratio * xyz_similarity_matrix
+    
     labels = similarity.argmax(axis=1)
     is_valid = similarity.max(axis=1) > args.instance_threshold
     return np.where(is_valid, labels, -1)
@@ -91,26 +115,74 @@ def labels_postprocess(args, xyzs, labels):
     knn.fit(xyzs, labels)
     return knn.predict(xyzs)
 
-def clustering(args, raw_features: np.ndarray, raw_xyzs: np.ndarray, class_masks: np.ndarray):
-    P, C = raw_features.shape
+def sor_filter_outliers(points, nb_neighbors=20, std_ratio=2.0):
+    """
+    Statistical Outlier Removal (SOR) filter to remove outliers from point cloud
+    
+    Args:
+        points: numpy array of shape (N, 3) representing point coordinates
+        nb_neighbors: number of neighbors to consider for distance calculation
+        std_ratio: standard deviation ratio threshold
+    
+    Returns:
+        inlier_mask: boolean mask indicating which points are inliers
+    """
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    
+    cl, ind = pcd.remove_statistical_outlier(nb_neighbors=nb_neighbors, std_ratio=std_ratio)
+    
+    inlier_mask = np.zeros(len(points), dtype=bool)
+    inlier_mask[ind] = True
+    
+    return inlier_mask
+
+def clustering(args, raw_instance_features: np.ndarray, raw_semantic_features: np.ndarray, raw_xyzs: np.ndarray, class_masks: np.ndarray):
+    P, C_instance = raw_instance_features.shape
+    P, C_semantic = raw_semantic_features.shape
     assert raw_xyzs.shape[0] == P and raw_xyzs.shape[1] == 3
     labels = np.full((P,), -1, dtype='i8')
     base_label = 0
+    
     for label_mask, class_id in zip(class_masks, range(class_masks.shape[0])):
-        masked_raw_features = raw_features[label_mask]
+        masked_raw_instance_features = raw_instance_features[label_mask]
+        masked_raw_semantic_features = raw_semantic_features[label_mask]
         masked_raw_xyzs = raw_xyzs[label_mask]
-        if masked_raw_features.shape[0] == 0:
+        
+        if masked_raw_instance_features.shape[0] == 0:
             continue
-        sample_mask, sample_num = get_sample_mask(masked_raw_features.shape[0], args.sample_num)
-        masked_features = feature_preprocess(masked_raw_features)
+        sample_mask, sample_num = get_sample_mask(masked_raw_instance_features.shape[0], args.sample_num)
+        masked_instance_features = feature_preprocess(masked_raw_instance_features)
+        masked_semantic_features = feature_preprocess(masked_raw_semantic_features)
         masked_xyzs = xyz_preprocess(masked_raw_xyzs)
-        sample_features = masked_features[sample_mask]
+        sample_instance_features = masked_instance_features[sample_mask]
+        sample_semantic_features = masked_semantic_features[sample_mask]
         sample_xyzs = masked_xyzs[sample_mask]
-        masked_clusters = hybird_clustering(args, sample_features, sample_xyzs)
+        masked_clusters = hybird_clustering(args, sample_instance_features, sample_semantic_features, sample_xyzs)
         if len(masked_clusters) == 0:
             continue
-        masked_labels = assign_label(args, masked_clusters, masked_features, masked_xyzs)
+        masked_labels = assign_label(args, masked_clusters, masked_instance_features, masked_semantic_features, masked_xyzs)
         masked_labels = labels_postprocess(args, masked_xyzs, masked_labels)
+        
+        # Apply SOR filter to each cluster separately
+        if args.use_sor and len(masked_raw_xyzs) > 0:
+            # Get unique cluster labels (excluding -1 which is background)
+            unique_cluster_ids = np.unique(masked_labels[masked_labels >= 0])
+            
+            for cluster_id in unique_cluster_ids:
+                # Create mask for current cluster
+                cluster_mask = (masked_labels == cluster_id)
+                cluster_xyzs = masked_raw_xyzs[cluster_mask]
+                
+                if len(cluster_xyzs) > 0:
+                    print(f"Applying SOR filter to cluster {cluster_id} in class {class_id} with {len(cluster_xyzs)} points...")
+                    sor_mask = sor_filter_outliers(cluster_xyzs, args.sor_nb_neighbors, args.sor_std_ratio)
+                    outliers_count = (~sor_mask).sum()
+                    print(f"SOR filter removed {outliers_count} outliers out of {len(cluster_xyzs)} points in cluster {cluster_id}")
+                    
+                    # Mark outliers as background (-1)
+                    masked_labels[cluster_mask] = np.where(sor_mask, cluster_id, -1)
+        
         labels[label_mask] = np.where(masked_labels>=0, masked_labels + base_label, -1)
         base_label += len(masked_clusters)
     return labels
@@ -258,13 +330,19 @@ def main(cfg: DictConfig):
     pipe = cfg.pipe
     args = cfg.clustering
     
+    # Verify that the sum of ratios is approximately 1
+    total_feature_ratio = args.instance_feature_ratio + args.semantic_feature_ratio + args.xyz_feature_ratio
+    if not np.isclose(total_feature_ratio, 1.0, atol=1e-6):
+        raise ValueError(f"Feature ratios must sum to 1.0, but got {total_feature_ratio}")
+    
     safe_state(args.quiet)
     feature_gaussians, background_color, background_feature = load_model(args, model)
     cameras = load_cameras(dataset)
     class_masks = calc_class_masks(args, dataset, feature_gaussians.get_semantic_features.cpu().numpy())
-    features = torch.concat((feature_gaussians.get_instance_features, feature_gaussians.get_semantic_features), dim=1).cpu().numpy()
+    instance_features = feature_gaussians.get_instance_features.cpu().numpy()
+    semantic_features = feature_gaussians.get_semantic_features.cpu().numpy()
     # features = feature_gaussians.get_semantic_features.cpu().numpy()
-    labels = clustering(args, features, feature_gaussians.get_xyz.cpu().numpy(), class_masks)
+    labels = clustering(args, instance_features, semantic_features, feature_gaussians.get_xyz.cpu().numpy(), class_masks)
     cluster_to_class = assign_class_semantic(args, labels, cameras, feature_gaussians, pipe, background_color, background_feature)
     output_json(args, labels.tolist(), cluster_to_class)
     clean(args)

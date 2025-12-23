@@ -7,9 +7,15 @@ progress_path: null
 clean: false
 quiet: false
 k: 256
-feature_ratio: 1.0
+instance_feature_ratio: 0.4
+semantic_feature_ratio: 0.4
+xyz_feature_ratio: 0.2
 instance_threshold: 0.25
 background_threshold: 0.5
 scale_threshold: 0.8
 opcity_threshold: 0.01
 sample_num: -1
+# SOR (Statistical Outlier Removal) parameters
+use_sor: true
+sor_nb_neighbors: 50
+sor_std_ratio: 0.05
