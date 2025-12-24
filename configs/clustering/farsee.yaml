@@ -7,9 +7,9 @@ progress_path: null
 clean: false
 quiet: false
 k: 256
-instance_feature_ratio: 0.4
-semantic_feature_ratio: 0.4
-xyz_feature_ratio: 0.2
+instance_feature_ratio: 0.3
+semantic_feature_ratio: 0.3
+xyz_feature_ratio: 0.4
 instance_threshold: 0.25
 background_threshold: 0.5
 scale_threshold: 0.8
