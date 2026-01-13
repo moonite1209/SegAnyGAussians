@@ -1,0 +1,15 @@
+downsample: 2
+images_path: '${base_path}/images'
+masks_path: '${base_path}/masks'
+labels_path: '${base_path}/labels'
+rgb_masks_path: '${base_path}/rgb_masks'
+sam_arch: vit_h
+sam_checkpoint_path: 'weights/sam_vit_h_4b8939.pth'
+groundingdino_checkpoint_path: 'weights/groundingdino_swint_ogc.pth'
+groundingdino_config_path: 'weights/GroundingDINO_SwinT_OGC.py'
+progress_path: null
+downsample_type: image
+classes: ['Insulator', 'A brown pole', 'chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
+box_threshold: 0.35
+text_threshold: 0.35
+nms_threshold: 0.8

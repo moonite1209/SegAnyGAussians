@@ -74,6 +74,17 @@ def object_detection(args, dino, image):
     detections.xyxy = detections.xyxy[nms_idx]
     detections.confidence = detections.confidence[nms_idx]
     detections.class_id = detections.class_id[nms_idx]
+    
+    # 过滤掉class_id为None的检测结果
+    valid_idx = [i for i, c in enumerate(detections.class_id) if c is not None]
+    detections.xyxy = detections.xyxy[valid_idx]
+    detections.confidence = detections.confidence[valid_idx]
+    detections.class_id = detections.class_id[valid_idx]
+    
+    # 将class_id转换为np.int64类型
+    if len(detections.class_id) > 0:
+        detections.class_id = np.array(detections.class_id, dtype=np.int64)
+    
     return detections
 
 def class_to_feature(classes, dim=32, device='cpu'):
@@ -120,8 +131,8 @@ def main(cfg: DictConfig):
             rotated_image = cv2.resize(rotated_image,dsize=(rotated_image.shape[1] // args.downsample, rotated_image.shape[0] // args.downsample),fx=1,fy=1,interpolation=cv2.INTER_LINEAR)
 
         detections = object_detection(args, dino, rotated_image)
-        # if detections.xyxy.shape[0] == 0:
-        #     continue
+        if detections.xyxy.shape[0] == 0:
+            continue
 
         # convert detections to masks
         detections.mask = segment(
