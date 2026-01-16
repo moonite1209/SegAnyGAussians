@@ -112,15 +112,19 @@ def loadCam(resolution, id, cam_info, resolution_scale):
 
     if cam_info.masks_path:
         masks = torch.load(cam_info.masks_path, weights_only=True)
-        masks_float = masks.float()
-        resized_masks_float = F.interpolate(
-            masks_float.unsqueeze(1),
-            size=(resized_h, resized_w),  # (H, W)
-            mode='bilinear',
-            align_corners=False
-        ).squeeze(1)
-        resized_masks = (resized_masks_float > 0.5).bool()
-        masks = resized_masks
+        if masks.shape[0] > 0:  # 只有当有mask时才进行插值
+            masks_float = masks.float()
+            resized_masks_float = F.interpolate(
+                masks_float.unsqueeze(1),
+                size=(resized_h, resized_w),  # (H, W)
+                mode='bilinear',
+                align_corners=False
+            ).squeeze(1)
+            resized_masks = (resized_masks_float > 0.5).bool()
+            masks = resized_masks
+        else:
+            # 如果是空mask，保持为空
+            masks = torch.empty((0, resized_h, resized_w), dtype=torch.bool)
     else:
         masks = None
 

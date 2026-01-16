@@ -131,18 +131,25 @@ def main(cfg: DictConfig):
             rotated_image = cv2.resize(rotated_image,dsize=(rotated_image.shape[1] // args.downsample, rotated_image.shape[0] // args.downsample),fx=1,fy=1,interpolation=cv2.INTER_LINEAR)
 
         detections = object_detection(args, dino, rotated_image)
-        if detections.xyxy.shape[0] == 0:
-            continue
 
         # convert detections to masks
-        detections.mask = segment(
-            args,
-            sam_predictor=sam,
-            image=rotated_image,
-            xyxy=detections.xyxy
-        )
+        if detections.xyxy.shape[0] == 0:
+            # 如果没有检测到物体，生成空的mask数组
+            H, W = rotated_image.shape[:2]
+            if args.downsample != 1 and args.downsample_type == 'mask':
+                H, W = H // args.downsample, W // args.downsample
+            detections.mask = np.zeros((0, H, W), dtype='b1')
+            detections.class_id = np.array([], dtype=np.int64)
+        else:
+            # 正常检测物体并生成mask
+            detections.mask = segment(
+                args,
+                sam_predictor=sam,
+                image=rotated_image,
+                xyxy=detections.xyxy
+            )
 
-        if args.downsample != 1 and args.downsample_type == 'mask':
+        if args.downsample != 1 and args.downsample_type == 'mask' and detections.mask.shape[0] > 0:
             H,W = rotated_image.shape[0] // args.downsample, rotated_image.shape[1] // args.downsample
             mask_list = np.zeros((0,H,W), dtype='b1')
             for i, mask in enumerate(detections.mask):
@@ -158,17 +165,21 @@ def main(cfg: DictConfig):
         torch.save(torch.tensor(detections.class_id, dtype=torch.int64), os.path.join(args.labels_path, f'{os.path.splitext(os.path.basename(image_name))[0]}.pt')) # int[masks]
 
         if args.rgb_masks_path:
-            box_annotator = sv.BoxAnnotator()
-            mask_annotator = sv.MaskAnnotator()
-            label_annotator = sv.LabelAnnotator()
-            labels = [
-                f"{args.classes[class_id.item()]} {confidence.item():0.2f}" 
-                for _, _, confidence, class_id, _, _ 
-                in detections]
-            annotated_image = mask_annotator.annotate(scene=rotated_image.copy(), detections=detections)
-            annotated_image = box_annotator.annotate(scene=annotated_image, detections=detections)
-            annotated_image = label_annotator.annotate(scene=annotated_image, detections=detections, labels=labels)
-            cv2.imwrite(os.path.join(args.rgb_masks_path, f'{os.path.splitext(os.path.basename(image_name))[0]}.jpg'), cv2.cvtColor(cv2.rotate(annotated_image, cv2.ROTATE_90_COUNTERCLOCKWISE), cv2.COLOR_RGB2BGR))
+            if detections.xyxy.shape[0] > 0:  # 只有当有检测结果时才生成带注释的图像
+                box_annotator = sv.BoxAnnotator()
+                mask_annotator = sv.MaskAnnotator()
+                label_annotator = sv.LabelAnnotator()
+                labels = [
+                    f"{args.classes[class_id.item()]} {confidence.item():0.2f}" 
+                    for _, _, confidence, class_id, _, _ 
+                    in detections]
+                annotated_image = mask_annotator.annotate(scene=rotated_image.copy(), detections=detections)
+                annotated_image = box_annotator.annotate(scene=annotated_image, detections=detections)
+                annotated_image = label_annotator.annotate(scene=annotated_image, detections=detections, labels=labels)
+                cv2.imwrite(os.path.join(args.rgb_masks_path, f'{os.path.splitext(os.path.basename(image_name))[0]}.jpg'), cv2.cvtColor(cv2.rotate(annotated_image, cv2.ROTATE_90_COUNTERCLOCKWISE), cv2.COLOR_RGB2BGR))
+            else:
+                # 如果没有检测结果，直接保存旋转后的原始图像
+                cv2.imwrite(os.path.join(args.rgb_masks_path, f'{os.path.splitext(os.path.basename(image_name))[0]}.jpg'), cv2.cvtColor(cv2.rotate(rotated_image, cv2.ROTATE_90_COUNTERCLOCKWISE), cv2.COLOR_RGB2BGR))
 
 if __name__ == "__main__":
     main()
