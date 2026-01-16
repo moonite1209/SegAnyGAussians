@@ -138,24 +138,33 @@ def calc_semantic_loss(args, masks, labels, label_features, rendered_features):
 
     # 获取每个样本对应的语义特征 [N, 32]
     selected_label_features = label_features[labels]  # shape: [N, 32]
-
-    # 扩展为 [N, 32, H, W] 以与 rendered_features 对齐
-    target_features = selected_label_features.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, H, W)
-
-    # 将 rendered_features 扩展为 [N, 32, H, W]
-    rendered_expanded = rendered_features.unsqueeze(0).expand(N, -1, -1, -1)
-
-    # 计算 L1 loss
-    l1_loss = torch.abs(rendered_expanded - target_features)  # [N, 32, H, W]
-
-    # 应用 mask：只在 mask 为 True 的位置计算 loss
-    mask_expanded = masks.unsqueeze(1).expand_as(l1_loss)  # [N, 32, H, W]
-    masked_loss = l1_loss[mask_expanded]
-
+    
+    # 优化：避免完整扩展特征图，而是逐mask计算loss
+    total_loss = 0.0
+    valid_mask_count = 0
+    
+    for i in range(N):
+        mask = masks[i]
+        if not mask.any():
+            continue
+            
+        # 获取当前mask的目标特征
+        target_feature = selected_label_features[i]  # shape: [32]
+        
+        # 只计算mask区域的feature loss
+        rendered_feature_masked = rendered_features[:, mask]  # shape: [32, num_mask_pixels]
+        target_feature_expanded = target_feature.unsqueeze(1).expand(-1, rendered_feature_masked.shape[1])  # shape: [32, num_mask_pixels]
+        
+        # 计算当前mask的L1 loss
+        mask_loss = torch.abs(rendered_feature_masked - target_feature_expanded).mean()
+        
+        total_loss += mask_loss
+        valid_mask_count += 1
+    
     # 返回平均 loss
-    if masked_loss.numel() == 0:
-        return torch.tensor(0.0, device=l1_loss.device, requires_grad=True)
-    return masked_loss.mean()
+    if valid_mask_count == 0:
+        return torch.tensor(0.0, device=rendered_features.device, requires_grad=True)
+    return total_loss / valid_mask_count
 
 def batch_report(tb_writer: SummaryWriter, iteration, feature_gaussians, loss, intra_loss, inter_loss, batch_time):
     if tb_writer is None:
@@ -211,22 +220,51 @@ def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: 
     N,H,W = camera.original_masks.shape
     if N==0:
         return
+    
+    # Reduce memory by moving camera to GPU only when needed
     camera.to('cuda')
-    render_pkg = render_contrastive_feature(camera, feature_gaussians, pipe, background_feature)
+    
+    # Compute depth map once and reuse for both feature renders
+    depth_map = render_with_depth(camera, feature_gaussians, pipe, background)['depth'].detach()
+    
+    # First render: contrastive features (reusing depth map)
+    render_pkg = render_contrastive_feature(camera, feature_gaussians, pipe, background_feature, depth=depth_map)
     rendered_contrastive_features = render_pkg["render"]
+    
+    # Calculate contrastive loss
     contrastive_loss, intra_loss, inter_loss = calc_loss_mask_avg(args, camera.original_masks, rendered_contrastive_features)
-    render_semantic_pkg = render_semantic_feature(camera, feature_gaussians, pipe, background_feature)
+    
+    # Free memory from first render
+    del render_pkg, rendered_contrastive_features
+    torch.cuda.empty_cache()
+    
+    # Second render: semantic features (reusing depth map)
+    render_semantic_pkg = render_semantic_feature(camera, feature_gaussians, pipe, background_feature, depth=depth_map)
     rendered_semantic_features = render_semantic_pkg["render"]
+    
+    # Calculate semantic loss
     semantic_loss = calc_semantic_loss(args, camera.original_masks, camera.labels, camera.label_features, rendered_semantic_features)
-    loss = contrastive_loss+semantic_loss
+    
+    # Free memory from second render and depth map
+    del render_semantic_pkg, rendered_semantic_features, depth_map
+    torch.cuda.empty_cache()
+    
+    # Combine losses and backpropagate
+    loss = contrastive_loss + semantic_loss
     loss.backward()
     batch_timing_end.record()
+    # Update parameters and free memory
     feature_gaussians.optimizer.step()
     epoch_bar.set_postfix({
         "loss": f"{loss.item():.{3}f}",
         "intra_loss": f"{intra_loss.item():.{3}f}",
         "inter_loss": f"{inter_loss.item():.{3}f}",
     })
+    
+    # Free loss tensors
+    del loss, contrastive_loss, semantic_loss
+    torch.cuda.empty_cache()
+    
     batch_report(tb_writer, train_bar.n*epoch_bar.total+epoch_bar.n, feature_gaussians, loss, intra_loss, inter_loss, batch_timing_start.elapsed_time(batch_timing_end))
     feature_gaussians.optimizer.zero_grad()
 

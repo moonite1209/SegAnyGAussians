@@ -221,6 +221,10 @@ def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
+    # Only compute depth if not provided
+    if depth is None:
+        depth = render_with_depth(viewpoint_camera, pc, pipe)['depth'].detach()
+
     raster_settings = GaussianRasterizationSettingsContrastiveF(
         image_height=int(viewpoint_camera.image_height),
         image_width=int(viewpoint_camera.image_width),
@@ -234,7 +238,7 @@ def render_contrastive_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=pipe.debug,
-        depth = render_with_depth(viewpoint_camera, pc, pipe)['depth'].detach(),
+        depth = depth,
         # depth = viewpoint_camera.depth_map,
     )
 
@@ -302,6 +306,10 @@ def render_semantic_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe, b
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
+    # Only compute depth if not provided
+    if depth is None:
+        depth = render_with_depth(viewpoint_camera, pc, pipe)['depth'].detach()
+
     raster_settings = GaussianRasterizationSettingsContrastiveF(
         image_height=int(viewpoint_camera.image_height),
         image_width=int(viewpoint_camera.image_width),
@@ -315,7 +323,7 @@ def render_semantic_feature(viewpoint_camera, pc : FeatureGaussianModel, pipe, b
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=pipe.debug,
-        depth = render_with_depth(viewpoint_camera, pc, pipe)['depth'].detach(),
+        depth = depth,
         # depth = viewpoint_camera.depth_map,
     )
 
