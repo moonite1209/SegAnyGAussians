@@ -69,11 +69,16 @@ class Camera(MiniCamera):
         self.camera_center = self.world_view_transform.inverse()[3, :3]
     def to(self, device):
         super().to(device)
-        self.original_image = self.original_image.to(device)
-        self.original_masks = self.original_masks.to(device)
-        self.label_features = self.label_features.to(device)
-        self.depth_map = self.depth_map.to(device)
-        self.confidence_map = self.confidence_map.to(device)
+        if self.original_masks is not None:
+            self.original_image = self.original_image.to(device)
+        if self.original_masks is not None:
+            self.original_masks = self.original_masks.to(device)
+        if self.label_features is not None:
+            self.label_features = self.label_features.to(device)
+        if self.depth_map is not None:
+            self.depth_map = self.depth_map.to(device)
+        if self.confidence_map is not None:
+            self.confidence_map = self.confidence_map.to(device)
 
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):

@@ -156,9 +156,7 @@ def loadCam(resolution, id, cam_info, resolution_scale):
         conf_map = resized_conf_map
     else:
         conf_map = None
-    # K缩放至深度图尺寸
-    depth_h, depth_w = depth_map.shape[:2]
-
+        
     # K = _camera_to_K(cam)
     # src_w, src_h = int(cam['width']), int(cam['height'])
     # K_scaled = scale_intrinsics(K, src_w, src_h, depth_w, depth_h)
