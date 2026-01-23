@@ -254,27 +254,28 @@ def assign_class_semantic(args, cluster_labels, cameras, feature_gaussians, pipe
         valid_cluster_ids.append(cid)
 
     cluster_centers = np.array(cluster_centers) # Shape: [Num_Clusters, 32]
-
+    valid_cluster_ids = np.array(valid_cluster_ids)
     # ==========================================
     # 3. 计算相似度并分配标签 (Cosine Similarity)
     # ==========================================
     # 为了计算余弦相似度，我们需要先对向量进行归一化 (L2 Norm)
     # 归一化后：A . B = cos(theta)
-
     # 对 label features 进行归一化
     lbl_norm = np.linalg.norm(lbl_feats_np, axis=1, keepdims=True)
     lbl_feats_normalized = lbl_feats_np / (lbl_norm + 1e-8) # 加 1e-8 防止除零
-
     # 对 cluster centers 进行归一化
     ctr_norm = np.linalg.norm(cluster_centers, axis=1, keepdims=True)
     centers_normalized = cluster_centers / (ctr_norm + 1e-8)
-
     # 计算相似度矩阵: [Num_Clusters, 32] @ [32, 22] -> [Num_Clusters, 22]
     similarity_matrix = centers_normalized @ lbl_feats_normalized.T
-
     # 找到每个簇最相似的 label 索引 (axis=1 表示在每一行中找最大值的索引)
     assigned_label_indices = np.argmax(similarity_matrix, axis=1)
-
+    max_similarity = np.max(similarity_matrix, axis=1)
+    # 过滤掉相似度低于阈值的簇
+    print(f'{max_similarity=}')
+    valid_mask = (max_similarity >= 0.99)
+    valid_cluster_ids = valid_cluster_ids[valid_mask]
+    assigned_label_indices = assigned_label_indices[valid_mask]
     # ==========================================
     # 4. 结果整理
     # ==========================================

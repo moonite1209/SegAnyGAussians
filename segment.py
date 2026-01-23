@@ -114,7 +114,7 @@ def words_to_tensors(word_list, dim=32, device='cpu'):
 def main(cfg: DictConfig):
     args = cfg.segment
     prepare_output_folder(args)
-    torch.save(words_to_tensors(args.classes), os.path.join(args.labels_path, f'label_features.pt'))
+    torch.save(words_to_tensors(args.classes, 16), os.path.join(args.labels_path, f'label_features.pt'))
     sam, dino = load_models(args)
 
 

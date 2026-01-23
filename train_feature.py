@@ -261,11 +261,10 @@ def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: 
         "inter_loss": f"{inter_loss.item():.{3}f}",
     })
     
+    batch_report(tb_writer, train_bar.n*epoch_bar.total+epoch_bar.n, feature_gaussians, loss, intra_loss, inter_loss, batch_timing_start.elapsed_time(batch_timing_end))
     # Free loss tensors
     del loss, contrastive_loss, semantic_loss
     torch.cuda.empty_cache()
-    
-    batch_report(tb_writer, train_bar.n*epoch_bar.total+epoch_bar.n, feature_gaussians, loss, intra_loss, inter_loss, batch_timing_start.elapsed_time(batch_timing_end))
     feature_gaussians.optimizer.zero_grad()
 
 def train_epoch(train_bar, train_dataloader, val_dataloader, scene, feature_gaussians, args, pipe, background, background_feature, tb_writer):

@@ -166,7 +166,7 @@ def loadCam(resolution, id, cam_info, resolution_scale):
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=gt_alpha_mask,
-                  image_name=cam_info.image_name, cx=cam_info.cx, cy=cam_info.cy, masks = resized_masks, labels = labels, label_features=label_features, depth_map=depth_map, confidence_map=conf_map, uid=id)
+                  image_name=cam_info.image_name, cx=cam_info.cx, cy=cam_info.cy, masks = masks, labels = labels, label_features=label_features, depth_map=depth_map, confidence_map=conf_map, uid=id)
 
 # def loadCam(emmm):
 
