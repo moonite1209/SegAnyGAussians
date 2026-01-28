@@ -267,6 +267,12 @@ def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: 
     torch.cuda.empty_cache()
     feature_gaussians.optimizer.zero_grad()
 
+    # Write progress for training stage (0-100%)
+    if args.progress_path:
+        progress = int(((epoch_bar.n*train_bar.total)+train_bar.n) / (epoch_bar.total*train_bar.total) * 100)
+        with open(args.progress_path, 'w') as f:
+            f.write(str(progress))
+
 def train_epoch(train_bar, train_dataloader, val_dataloader, scene, feature_gaussians, args, pipe, background, background_feature, tb_writer):
     epoch_bar = tqdm(train_dataloader, desc="Epoch progress", position=1, leave=False)
     for camera in epoch_bar:

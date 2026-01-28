@@ -148,7 +148,7 @@ def clustering(args, raw_instance_features: np.ndarray, raw_semantic_features: n
         masked_raw_instance_features = raw_instance_features[label_mask]
         masked_raw_semantic_features = raw_semantic_features[label_mask]
         masked_raw_xyzs = raw_xyzs[label_mask]
-        
+
         if masked_raw_instance_features.shape[0] == 0:
             continue
         sample_mask, sample_num = get_sample_mask(masked_raw_instance_features.shape[0], args.sample_num)
@@ -163,26 +163,26 @@ def clustering(args, raw_instance_features: np.ndarray, raw_semantic_features: n
             continue
         masked_labels = assign_label(args, masked_clusters, masked_instance_features, masked_semantic_features, masked_xyzs)
         masked_labels = labels_postprocess(args, masked_xyzs, masked_labels)
-        
+
         # Apply SOR filter to each cluster separately
         if args.use_sor and len(masked_raw_xyzs) > 0:
             # Get unique cluster labels (excluding -1 which is background)
             unique_cluster_ids = np.unique(masked_labels[masked_labels >= 0])
-            
+
             for cluster_id in unique_cluster_ids:
                 # Create mask for current cluster
                 cluster_mask = (masked_labels == cluster_id)
                 cluster_xyzs = masked_raw_xyzs[cluster_mask]
-                
+
                 if len(cluster_xyzs) > 0:
                     print(f"Applying SOR filter to cluster {cluster_id} in class {class_id} with {len(cluster_xyzs)} points...")
                     sor_mask = sor_filter_outliers(cluster_xyzs, args.sor_nb_neighbors, args.sor_std_ratio)
                     outliers_count = (~sor_mask).sum()
                     print(f"SOR filter removed {outliers_count} outliers out of {len(cluster_xyzs)} points in cluster {cluster_id}")
-                    
+
                     # Mark outliers as background (-1)
                     masked_labels[cluster_mask] = np.where(sor_mask, cluster_id, -1)
-        
+
         labels[label_mask] = np.where(masked_labels>=0, masked_labels + base_label, -1)
         base_label += len(masked_clusters)
     return labels
@@ -242,14 +242,14 @@ def assign_class_semantic(args, cluster_labels, cameras, feature_gaussians, pipe
     for cid in unique_clusters:
         # 找到属于当前簇 cid 的所有点的索引
         mask = (cluster_ids_np == cid)
-        
+
         # 取出对应的特征向量
         cluster_points = pt_feats_np[mask]
-        
+
         # 计算均值作为该簇的代表特征
         # axis=0 表示沿着列方向求平均，结果 shape 为 (32,)
         mean_feat = np.mean(cluster_points, axis=0)
-        
+
         cluster_centers.append(mean_feat)
         valid_cluster_ids.append(cid)
 
@@ -286,14 +286,110 @@ def assign_class_semantic(args, cluster_labels, cameras, feature_gaussians, pipe
     }
     return cluster_to_label_map
 
-def output_json(args, labels, classes, **kwargs):
+def get_bbox(labels, xyz, is_big_gaussian):
+    """
+    Compute 3D oriented bounding boxes for each instance cluster.
+    Projects points to X-Z plane and uses trimesh to compute oriented 2D bounds,
+    then extends to 3D by including Y range.
+
+    Args:
+        labels: instance labels for each point
+        xyz: point coordinates (N, 3)
+        is_big_gaussian: boolean mask filtering out large gaussians
+
+    Returns:
+        dict mapping instance_id to flattened bbox corners (24 floats)
+    """
+    from trimesh.bounds import oriented_bounds_2D
+
+    bbox = {}
+    for instance_id in np.unique(labels):
+        if instance_id < 0:
+            continue
+        instance_xyz = xyz[(labels == instance_id) & ~is_big_gaussian]
+        points_3d = instance_xyz
+
+        # Skip if too few points
+        if len(points_3d) < 3:
+            continue
+
+        # --- 1. Project to X-Z plane (ignore Y) ---
+        N, D = points_3d.shape
+        points_2d = points_3d[:, [0, 2]]  # shape: (N, 2), X and Z coordinates
+
+        # --- 2. Compute 2D oriented bounding box using trimesh ---
+        # oriented_bounds_2D returns a transform matrix that transforms points
+        # so their AABB center is at origin
+        transform_2d, rectangle_extents_2d = oriented_bounds_2D(points_2d)
+        # transform_2d: (3, 3) 2D homogeneous transform matrix
+        # rectangle_extents_2d: (2,) [width, height] in transformed 2D space
+
+        # --- 3. Extend 2D transform to 3D ---
+        transform_3d = np.eye(4)  # Initialize as identity matrix
+
+        # Copy rotation and translation from 2D transform to 3D transform
+        # transform_2d is:
+        # [ R_xx  R_xz  tx ]
+        # [ R_zx  R_zz  tz ]
+        # [  0     0    1 ]
+        transform_3d[0, 0] = transform_2d[0, 0]  # R_xx
+        transform_3d[0, 2] = transform_2d[0, 1]  # R_xz
+        transform_3d[0, 3] = transform_2d[0, 2]  # tx
+
+        transform_3d[2, 0] = transform_2d[1, 0]  # R_zx
+        transform_3d[2, 2] = transform_2d[1, 1]  # R_zz
+        transform_3d[2, 3] = transform_2d[1, 2]  # tz
+
+        # Y axis remains unchanged: transform_3d[1,1] = 1, others are 0 (already set by eye(4))
+
+        # --- 4. Apply 3D transform to "align" points ---
+        points_3d_hom = np.hstack([points_3d, np.ones((N, 1))])  # (N, 4)
+        points_3d_transformed = (transform_3d @ points_3d_hom.T).T  # (N, 4)
+        points_3d_transformed = points_3d_transformed[:, :3]  # Remove homogeneous dimension (N, 3)
+
+        # --- 5. Compute AABB of transformed point cloud ---
+        aabb_min = points_3d_transformed.min(axis=0)  # (3,)
+        aabb_max = points_3d_transformed.max(axis=0)  # (3,)
+
+        # --- 6. Build 8 corner points in local (transformed) space ---
+        half_extents_xz = rectangle_extents_2d / 2.0
+        corners_local = np.array([
+            [ half_extents_xz[0],  aabb_max[1],  half_extents_xz[1]],
+            [ half_extents_xz[0],  aabb_max[1], -half_extents_xz[1]],
+            [ half_extents_xz[0],  aabb_min[1], -half_extents_xz[1]],
+            [ half_extents_xz[0],  aabb_min[1],  half_extents_xz[1]],
+            [-half_extents_xz[0],  aabb_max[1],  half_extents_xz[1]],
+            [-half_extents_xz[0],  aabb_max[1], -half_extents_xz[1]],
+            [-half_extents_xz[0],  aabb_min[1], -half_extents_xz[1]],
+            [-half_extents_xz[0],  aabb_min[1],  half_extents_xz[1]]
+        ])  # (8, 3)
+
+        # --- 7. Transform local corners back to world coordinates ---
+        transform_3d_inv = np.linalg.inv(transform_3d)
+        corners_local_hom = np.hstack([corners_local, np.ones((8, 1))])  # (8, 4)
+        bbox_corners_world_hom = (transform_3d_inv @ corners_local_hom.T).T  # (8, 4)
+        bbox_corners_world = bbox_corners_world_hom[:, :3]  # (8, 3)
+        bbox[instance_id] = bbox_corners_world.flatten().tolist()
+    return bbox
+
+def output_json(args, labels, classes, xyz, is_big_gaussian):
     output = {}
     output['point_labels'] = labels
-    # instances = {str(cluster): {'class': klass} for cluster, klass in classes.items() if klass in args.selected_classes}
-    instances = {str(cluster): {'class': klass} for cluster, klass in classes.items()}
-    output['instances'] = instances
-    for k, v in kwargs:
-        output[k] = v
+    # Compute bounding boxes for each instance
+    bbox = get_bbox(labels, xyz, is_big_gaussian)
+    # Combine bbox and class information
+    instances = {}
+    for cluster_id, klass in classes.items():
+        cluster_key = str(cluster_id)
+        if cluster_id in bbox:
+            instances[cluster_key] = {
+                'bbox': bbox[cluster_id],
+                'class': klass
+            }
+        else:
+            instances[cluster_key] = {'class': klass}
+    # Filter instances to only include selected_classes (like old version)
+    output['instances'] = {k: v for k, v in instances.items() if v.get('class') in args.selected_classes}
     with open(args.json_path,'w') as f:
         json.dump(output,f)
 
@@ -330,23 +426,58 @@ def main(cfg: DictConfig):
     dataset = cfg.dataset
     pipe = cfg.pipe
     args = cfg.clustering
-    
+
     # Verify that the sum of ratios is approximately 1
     total_feature_ratio = args.instance_feature_ratio + args.semantic_feature_ratio + args.xyz_feature_ratio
     if not np.isclose(total_feature_ratio, 1.0, atol=1e-6):
         raise ValueError(f"Feature ratios must sum to 1.0, but got {total_feature_ratio}")
-    
+
+    # Create progress file directory if needed
+    if args.progress_path:
+        os.makedirs(os.path.dirname(args.progress_path), exist_ok=True)
+        with open(args.progress_path, 'w') as f:
+            f.write('0')
+
     safe_state(args.quiet)
     feature_gaussians, background_color, background_feature = load_model(args, model)
     cameras = load_cameras(dataset)
+
+    # Write progress: data loaded (0-10%)
+    if args.progress_path:
+        with open(args.progress_path, 'w') as f:
+            f.write('10')
+
     class_masks = calc_class_masks(args, dataset, feature_gaussians.get_semantic_features.cpu().numpy())
     instance_features = feature_gaussians.get_instance_features.cpu().numpy()
     semantic_features = feature_gaussians.get_semantic_features.cpu().numpy()
+    xyz = feature_gaussians.get_xyz.cpu().numpy()
+
+    # Compute is_big_gaussian filter (like old version)
+    point_scales = feature_gaussians.get_scaling.detach().cpu().numpy()
+    is_big_gaussian = point_scales.max(axis=-1) > (np.median(point_scales.max(axis=-1)) * args.scale_threshold)
+
     # features = feature_gaussians.get_semantic_features.cpu().numpy()
-    labels = clustering(args, instance_features, semantic_features, feature_gaussians.get_xyz.cpu().numpy(), class_masks)
+    labels = clustering(args, instance_features, semantic_features, xyz, class_masks)
+
+    # Write progress: clustering done (50-60%)
+    if args.progress_path:
+        with open(args.progress_path, 'w') as f:
+            f.write('60')
+
     cluster_to_class = assign_class_semantic(args, labels, cameras, feature_gaussians, pipe, background_color, background_feature)
-    output_json(args, labels.tolist(), cluster_to_class)
+
+    # Write progress: class assignment done (90-95%)
+    if args.progress_path:
+        with open(args.progress_path, 'w') as f:
+            f.write('95')
+
+    output_json(args, labels.tolist(), cluster_to_class, xyz, is_big_gaussian)
     clean(args)
+
+    # Write progress: all done (100%)
+    if args.progress_path:
+        with open(args.progress_path, 'w') as f:
+            f.write('100')
 
 if __name__ == "__main__":
     main()

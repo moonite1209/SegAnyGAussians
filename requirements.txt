@@ -27,6 +27,7 @@ dearpygui
 hdbscan
 joblib
 open3d
+hydra-core
 submodules/diff-gaussian-rasterization
 submodules/diff-gaussian-rasterization_contrastive_f
 submodules/diff-gaussian-rasterization-depth
