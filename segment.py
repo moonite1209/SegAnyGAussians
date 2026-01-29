@@ -31,6 +31,12 @@ def prepare_output_folder(args):
         os.makedirs(os.path.dirname(args.progress_path), exist_ok=True)
     if args.rgb_masks_path:
         os.makedirs(args.rgb_masks_path, exist_ok=True)
+
+def write_progress(progress_path, value):
+    if progress_path:
+        os.makedirs(os.path.dirname(progress_path), exist_ok=True)
+        with open(progress_path, 'w') as f:
+            f.write(str(value))
 def segment(args, sam_predictor: SamPredictor, image: np.ndarray, xyxy: np.ndarray) -> np.ndarray:
     H,W,C = image.shape
     sam_predictor.set_image(image)
@@ -121,9 +127,7 @@ def main(cfg: DictConfig):
     images_name = sorted([e for e in os.listdir(args.images_path) if e.endswith('.jpg')])
     progress_bar = tqdm(images_name)
     for image_name in progress_bar:
-        if args.progress_path:
-            with open(args.progress_path, 'w') as f:
-                f.write(str((progress_bar.n+1)*100//progress_bar.total))
+        write_progress(args.progress_path, (progress_bar.n+1)*100//progress_bar.total)
 
         image = cv2.cvtColor(cv2.imread(os.path.join(args.images_path, image_name)), cv2.COLOR_BGR2RGB)
         rotated_image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)

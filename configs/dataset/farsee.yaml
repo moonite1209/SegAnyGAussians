@@ -3,7 +3,7 @@ eval: false
 allow_principle_point_shift: false
 images_path: '${base_path}/fastRecon/dense/sparse/0/images'
 sparse_path: '${base_path}/fastRecon/dense/sparse/0'
-masks_path: '${base_path}/masks'
-labels_path: '${base_path}/labels'
+masks_path: '${base_path}/saga/masks'
+labels_path: '${base_path}/saga/labels'
 # depth_path: '${base_path}/data'
 depth_path: ''

@@ -32,4 +32,4 @@ detect_anomaly: false
 progress_path: null
 point_cloud_path: '${base_path}/output_models/point_cloud/iteration_30000/point_cloud.ply'
 feature_point_cloud_path: '${base_path}/contrastive_feature_point_cloud.ply'
-tb_path: '${base_path}'
+tb_path: '${hydra:runtime.output_dir}'

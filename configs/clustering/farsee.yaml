@@ -1,21 +1,25 @@
 classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
 selected_classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
-feature_point_cloud_path: '${base_path}/contrastive_feature_point_cloud.ply'
-json_path: '${base_path}/output.json'
-features_path: '${base_path}/labels/label_features.pt'
+feature_point_cloud_path: '${base_path}/saga/contrastive_feature_point_cloud.ply'
+json_path: '${base_path}/saga/output.json'
+features_path: '${base_path}/saga/labels/label_features.pt'
 progress_path: null
 clean: false
 quiet: false
 k: 256
-instance_feature_ratio: 0.3
-semantic_feature_ratio: 0.3
-xyz_feature_ratio: 0.4
+instance_feature_ratio: 0.4
+semantic_feature_ratio: 0.4
+xyz_feature_ratio: 0.2
 instance_threshold: 0.25
 background_threshold: 0.5
 scale_threshold: 0.8
 opcity_threshold: 0.01
-sample_num: -1
+sample_num: 10000
 # SOR (Statistical Outlier Removal) parameters
 use_sor: true
 sor_nb_neighbors: 50
 sor_std_ratio: 0.05
+# Large Gaussian filter parameters
+use_scale_filter: true
+use_scale_percentile: true
+scale_percentile: 80.0

@@ -1,8 +1,8 @@
 downsample: 1
 images_path: '${base_path}/fastRecon/dense/sparse/0/images'
-masks_path: '${base_path}/masks'
-labels_path: '${base_path}/labels'
-rgb_masks_path: '${base_path}/rgb_masks'
+masks_path: '${base_path}/saga/masks'
+labels_path: '${base_path}/saga/labels'
+rgb_masks_path: '${base_path}/saga/rgb_masks'
 sam_arch: vit_h
 sam_checkpoint_path: 'weights/sam_vit_h_4b8939.pth'
 groundingdino_checkpoint_path: 'weights/groundingdino_swint_ogc.pth'
