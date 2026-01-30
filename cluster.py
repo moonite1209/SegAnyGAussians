@@ -43,10 +43,27 @@ def load_cameras(dataset):
     return scene.getCameraDataset()
 
 def get_sample_mask(total_num, sample_num):
-    if sample_num < 0:
-        sampled_mask = np.random.rand(total_num) > 0.97
+    """
+    Generate a sampling mask.
+
+    Args:
+        total_num: Total number of points
+        sample_num:
+            - If 0 < sample_num < 1: sample this proportion of points
+            - If >= 1: sample this exact number of points
+
+    Returns:
+        sampled_mask: boolean mask of sampled points
+        actual_sample_num: actual number of sampled points
+    """
+    if sample_num <= 1:
+        # Sample by proportion (0-1)
+        n_samples = max(1, int(total_num * sample_num))
+        sampled_mask = uniform_sample(total_num, n_samples)
     else:
-        sampled_mask = uniform_sample(total_num, sample_num)
+        # Sample by exact count
+        n_samples = int(sample_num)
+        sampled_mask = uniform_sample(total_num, n_samples)
     return sampled_mask, sampled_mask.sum().item()
 
 def feature_preprocess(features):
@@ -83,7 +100,7 @@ def hybird_clustering(args, instance_features, semantic_features, xyzs):
 
     n_clusters = len(sample_labels[sample_labels >= 0])
     n_noise = len(sample_labels[sample_labels == -1])
-    logger.info(f"Clustering result: {n_clusters} clusters, {n_noise} noise points out of {len(sample_labels)} total samples")
+    logger.info(f"Clustering result: {n_clusters} points, {n_noise} noise points out of {len(sample_labels)} total samples")
 
     clusters = []
     for label in np.unique(sample_labels):
@@ -157,7 +174,7 @@ def sor_filter_outliers(points, nb_neighbors=20, std_ratio=2.0):
     """
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
-    
+
     cl, ind = pcd.remove_statistical_outlier(nb_neighbors=nb_neighbors, std_ratio=std_ratio)
     
     inlier_mask = np.zeros(len(points), dtype=bool)
@@ -296,7 +313,7 @@ def clustering(args, raw_instance_features: np.ndarray, raw_semantic_features: n
         sample_semantic_features = masked_semantic_features[sample_mask]
         sample_xyzs = masked_xyzs[sample_mask]
 
-        logger.debug(f"Sampling {sample_num} points for clustering (sample_num={args.sample_num})")
+        logger.debug(f"Sampling {sample_num} points for clustering")
 
         masked_clusters = hybird_clustering(args, sample_instance_features, sample_semantic_features, sample_xyzs)
         if len(masked_clusters) == 0:
@@ -686,7 +703,9 @@ def main(cfg: DictConfig):
     write_progress(args.progress_path, '95')
 
     # Output clustering results to JSON file
-    output_json(args, bbox_labels.tolist(), cluster_to_class, bboxs)
+    labels = apply_sor_to_clusters(labels, xyzs, 30, 2)
+    labels = filter_large_gaussians(labels, scales, use_percentile=True, percentile=99.0)
+    output_json(args, labels.tolist(), cluster_to_class, bboxs)
     clean(args)
 
     # Write progress: all done (100%)

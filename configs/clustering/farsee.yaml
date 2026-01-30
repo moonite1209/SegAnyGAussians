@@ -7,19 +7,19 @@ progress_path: null
 clean: false
 quiet: false
 k: 256
-instance_feature_ratio: 0.4
-semantic_feature_ratio: 0.4
-xyz_feature_ratio: 0.2
+instance_feature_ratio: 0.1
+semantic_feature_ratio: 0
+xyz_feature_ratio: 0.9
 instance_threshold: 0.25
 background_threshold: 0.5
 scale_threshold: 0.8
 opcity_threshold: 0.01
-sample_num: 10000
+sample_num: 0.03
 # SOR (Statistical Outlier Removal) parameters
 use_sor: true
-sor_nb_neighbors: 50
+sor_nb_neighbors: 100
 sor_std_ratio: 0.05
 # Large Gaussian filter parameters
 use_scale_filter: true
 use_scale_percentile: true
-scale_percentile: 80.0
+scale_percentile: 50.0

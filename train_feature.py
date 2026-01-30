@@ -269,7 +269,7 @@ def train_batch(train_bar, epoch_bar, camera: Camera, scene, feature_gaussians: 
 
     # Write progress for training stage (0-100%)
     if args.progress_path:
-        progress = int(((epoch_bar.n*train_bar.total)+train_bar.n) / (epoch_bar.total*train_bar.total) * 100)
+        progress = int((train_bar.n*epoch_bar.total+epoch_bar.n) / (train_bar.total*epoch_bar.total) * 100)
         with open(args.progress_path, 'w') as f:
             f.write(str(progress))
 
