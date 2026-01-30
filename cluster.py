@@ -590,13 +590,11 @@ def output_json(args, labels, classes, bboxs):
 
     logger.info(f"Successfully saved results to {args.json_path}")
 
-def clean(args):
-    if not args.clean:
-        return
-    if os.path.isdir(args.masks_path):
-        shutil.rmtree(args.masks_path)
-    if os.path.isdir(args.labels_path):
-        shutil.rmtree(args.labels_path)
+def clean(args, dataset):
+    if os.path.isdir(dataset.masks_path):
+        shutil.rmtree(dataset.masks_path)
+    if os.path.isdir(dataset.labels_path):
+        shutil.rmtree(dataset.labels_path)
     if os.path.isfile(args.feature_point_cloud_path):
         os.remove(args.feature_point_cloud_path)
 
@@ -706,7 +704,8 @@ def main(cfg: DictConfig):
     labels = apply_sor_to_clusters(labels, xyzs, 30, 2)
     labels = filter_large_gaussians(labels, scales, use_percentile=True, percentile=99.0)
     output_json(args, labels.tolist(), cluster_to_class, bboxs)
-    clean(args)
+    if args.clean:
+        clean(args, dataset)
 
     # Write progress: all done (100%)
     write_progress(args.progress_path, '100')
