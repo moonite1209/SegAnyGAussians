@@ -701,8 +701,8 @@ def main(cfg: DictConfig):
     write_progress(args.progress_path, '95')
 
     # Output clustering results to JSON file
-    labels = apply_sor_to_clusters(labels, xyzs, 30, 2)
-    labels = filter_large_gaussians(labels, scales, use_percentile=True, percentile=99.0)
+    # labels = apply_sor_to_clusters(labels, xyzs, 30, 2)
+    # labels = filter_large_gaussians(labels, scales, use_percentile=True, percentile=99.0)
     output_json(args, labels.tolist(), cluster_to_class, bboxs)
     if args.clean:
         clean(args, dataset)

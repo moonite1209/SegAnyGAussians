@@ -9,7 +9,7 @@ groundingdino_checkpoint_path: 'weights/groundingdino_swint_ogc.pth'
 groundingdino_config_path: 'weights/GroundingDINO_SwinT_OGC.py'
 progress_path: null
 downsample_type: image
-classes: ['Insulator', 'A brown pole', 'chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
+classes: ['Insulator', 'A brown pole', 'chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
 box_threshold: 0.35
 text_threshold: 0.35
 nms_threshold: 0.8
