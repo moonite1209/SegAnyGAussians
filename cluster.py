@@ -422,7 +422,7 @@ def assign_class_semantic(args, cluster_labels, cameras, feature_gaussians, pipe
     max_similarity = np.max(similarity_matrix, axis=1)
     # Filter clusters with similarity below threshold
     logger.debug(f"Max similarity per cluster: {max_similarity}")
-    valid_mask = (max_similarity >= 0.99)
+    valid_mask = (max_similarity >= 0.5)
     valid_cluster_ids = valid_cluster_ids[valid_mask]
     assigned_label_indices = assigned_label_indices[valid_mask]
     # ==========================================
