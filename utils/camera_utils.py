@@ -11,7 +11,7 @@
 import os
 import torch
 import torch.nn.functional as F
-from scene.cameras import Camera
+from scene.camera import Camera
 import numpy as np
 from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal

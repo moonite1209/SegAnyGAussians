@@ -16,7 +16,7 @@ from random import randint
 from gaussian_renderer import render, render_contrastive_feature, render_with_depth, render_with_max_contributor, render_semantic_feature
 import sys
 from scene import FeatureScene, FeatureGaussianModel
-from scene.cameras import Camera
+from scene.camera import Camera
 from utils.general_utils import safe_state
 from utils.image_utils import psnr
 from utils.loss_utils import l1_loss
@@ -24,7 +24,6 @@ from utils.mask_utils import get_mask_map, on_boundary
 import uuid
 from tqdm import tqdm
 from argparse import ArgumentParser, Namespace
-from arguments import ModelParams, PipelineParams, OptimizationParams, get_combined_args
 import numpy as np
 import torch
 import torch.nn.functional as F

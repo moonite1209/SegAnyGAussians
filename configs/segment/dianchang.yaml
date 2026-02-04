@@ -1,15 +1,20 @@
-downsample: 2
 images_path: '${base_path}/images'
-masks_path: '${base_path}/masks'
-labels_path: '${base_path}/labels'
-rgb_masks_path: '${base_path}/rgb_masks'
-sam_arch: vit_h
-sam_checkpoint_path: 'weights/sam_vit_h_4b8939.pth'
-groundingdino_checkpoint_path: 'weights/groundingdino_swint_ogc.pth'
-groundingdino_config_path: 'weights/GroundingDINO_SwinT_OGC.py'
+masks_path: '${base_path}/saga/masks'
+labels_path: '${base_path}/saga/labels'
+rgb_masks_path: '${base_path}/saga/rgb_masks'
 progress_path: null
-downsample_type: image
-classes: ['Insulator', 'A brown pole', 'chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
-box_threshold: 0.35
-text_threshold: 0.35
-nms_threshold: 0.8
+classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
+
+# 分割器配置（组合检测器和分割器）
+ovsegmenter:
+  _target_: segment.OVDetectSegmenter
+  detector:
+    _target_: segment.GroundingDINODetector
+    model_id: "IDEA-Research/grounding-dino-tiny"
+    device: "cuda"
+    box_threshold: 0.35
+    text_threshold: 0.35
+  segmenter:
+    _target_: segment.SAMSegmenter
+    model_id: "facebook/sam-vit-base"
+    device: "cuda"

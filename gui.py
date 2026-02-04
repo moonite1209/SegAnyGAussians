@@ -17,7 +17,7 @@ from sklearn.preprocessing import minmax_scale
 from scene import GaussianModel, FeatureGaussianModel
 import dearpygui.dearpygui as dpg
 import math
-from scene.cameras import Camera, MiniCamera
+from scene.camera import Camera, MiniCamera
 from utils.general_utils import safe_state
 from utils.graphics_utils import focal2fov, fov2focal
 

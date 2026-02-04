@@ -1,5 +1,5 @@
 quiet: false
-feature_point_cloud_path: '${base_path}/contrastive_feature_point_cloud.ply'
-json_path: '${base_path}/output.json'
+feature_point_cloud_path: '${base_path}/saga/contrastive_feature_point_cloud.ply'
+json_path: '${base_path}/saga/output.json'
 window_height: 1080
 window_width: 1920

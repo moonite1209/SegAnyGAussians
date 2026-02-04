@@ -14,7 +14,7 @@ from PIL import Image
 import numpy as np
 import os
 
-from scene.camera_spec import CameraSpec
+from scene.camera_spec import CameraSpec, CameraParams, CameraMetaData
 from scene.camera_data import CameraData
 from utils.camera_utils import read_dmb_file
 from utils.general_utils import PILtoTorch
@@ -74,7 +74,7 @@ class CameraLoader:
         data = CameraData()
 
         # 1. Load image
-        data.image, data.alpha_mask = self._load_image(spec)
+        data.image, data.alpha_mask = self._load_image_from_spec(spec)
 
         # 2. Load masks
         if spec.mask_path:
@@ -95,9 +95,51 @@ class CameraLoader:
         data._loaded = True
         return data
 
-    def _load_image(self, spec: CameraSpec) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def _load_from_params_and_metadata(
+        self,
+        params: CameraParams,
+        metadata: CameraMetaData
+    ) -> CameraData:
         """
-        Load image and adjust resolution.
+        Load all camera data from separate CameraParams and CameraMetaData.
+
+        Args:
+            params: CameraParams containing rendering parameters (for resolution)
+            metadata: CameraMetaData containing file paths
+
+        Returns:
+            CameraData containing all loaded tensors
+
+        Raises:
+            DataLoadError: If any required file fails to load
+        """
+        data = CameraData()
+
+        # 1. Load image
+        data.image, data.alpha_mask = self._load_image_from_metadata(metadata, params.width, params.height)
+
+        # 2. Load masks
+        if metadata.mask_path:
+            data.masks = self._load_masks(metadata.mask_path, data.image.shape)
+
+        # 3. Load labels
+        if metadata.labels_path:
+            data.labels, data.label_features = self._load_labels(metadata.labels_path)
+
+        # 4. Load depth
+        if metadata.depth_path:
+            data.depth_map = self._load_depth(metadata.depth_path, data.image.shape)
+
+        # 5. Load confidence
+        if metadata.confidence_path:
+            data.confidence_map = self._load_confidence(metadata.confidence_path, data.image.shape)
+
+        data._loaded = True
+        return data
+
+    def _load_image_from_spec(self, spec: CameraSpec) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Load image and adjust resolution (from CameraSpec for backward compatibility).
 
         Args:
             spec: CameraSpec with image_path
@@ -110,16 +152,42 @@ class CameraLoader:
         Raises:
             DataLoadError: If image file cannot be loaded
         """
+        return self._load_image_from_metadata(
+            spec, spec.image_path, spec.width, spec.height
+        )
+
+    def _load_image_from_metadata(
+        self,
+        metadata: CameraMetaData,
+        orig_w: int,
+        orig_h: int
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Load image and adjust resolution (from CameraMetaData).
+
+        Args:
+            metadata: CameraMetaData with image_path
+            orig_w: Original image width (from CameraParams)
+            orig_h: Original image height (from CameraParams)
+
+        Returns:
+            Tuple of (image_tensor, alpha_mask_tensor)
+            - image_tensor: (3, H, W) tensor in [0, 1] range
+            - alpha_mask_tensor: (1, H, W) tensor or None
+
+        Raises:
+            DataLoadError: If image file cannot be loaded
+        """
         try:
-            image = Image.open(spec.image_path)
+            image = Image.open(metadata.image_path)
         except FileNotFoundError:
-            raise DataLoadError(spec.image_path, "Image file not found")
+            raise DataLoadError(metadata.image_path, "Image file not found")
         except Exception as e:
-            raise DataLoadError(spec.image_path, f"Failed to load image: {str(e)}")
+            raise DataLoadError(metadata.image_path, f"Failed to load image: {str(e)}")
 
         # Calculate target resolution
-        orig_w, orig_h = image.size
-        resized_w, resized_h = self._calculate_target_resolution(orig_w, orig_h)
+        img_w, img_h = image.size
+        resized_w, resized_h = self._calculate_target_resolution(img_w, img_h)
 
         # Convert to tensor
         resized_image_rgb = PILtoTorch(image, (resized_w, resized_h))

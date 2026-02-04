@@ -5,4 +5,4 @@ defaults:
   - gui: farsee
   - _self_
 
-base_path: data/temp/1750728479386.658
+base_path: data/default

@@ -8,14 +8,14 @@
 import torch
 import hashlib
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Union
 import logging
 
 logger = logging.getLogger(__name__)
 
 # TYPE_CHECKING用于类型提示，避免循环导入
 if TYPE_CHECKING:
-    from scene.camera_spec import CameraSpec
+    from scene.camera_spec import CameraSpec, CameraMetaData
     from scene.camera_data import CameraData
 
 
@@ -51,9 +51,40 @@ class DataCache:
         else:
             logger.debug("DataCache is disabled")
 
-    def _get_cache_key(self, spec: 'CameraSpec', resolution_scale: float) -> str:
+    def _get_cache_key_from_metadata(
+        self,
+        metadata: 'CameraMetaData',
+        resolution_scale: float
+    ) -> str:
         """
-        生成缓存键。
+        生成缓存键（从 CameraMetaData）。
+
+        使用文件路径、修改时间和分辨率生成唯一键。
+
+        Args:
+            metadata: CameraMetaData实例
+            resolution_scale: 分辨率缩放因子
+
+        Returns:
+            MD5哈希字符串
+        """
+        try:
+            image_stat = metadata.image_path.stat()
+            key_data = f"{metadata.image_path}:{image_stat.st_mtime}:{image_stat.st_size}:{resolution_scale}"
+        except Exception as e:
+            # 如果无法获取文件状态，使用路径作为fallback
+            logger.warning(f"Failed to get file stat for caching: {e}")
+            key_data = f"{metadata.image_path}:{resolution_scale}"
+
+        return hashlib.md5(key_data.encode()).hexdigest()
+
+    def _get_cache_key_from_spec(
+        self,
+        spec: 'CameraSpec',
+        resolution_scale: float
+    ) -> str:
+        """
+        生成缓存键（从 CameraSpec，向后兼容）。
 
         使用文件路径、修改时间和分辨率生成唯一键。
 
@@ -74,12 +105,16 @@ class DataCache:
 
         return hashlib.md5(key_data.encode()).hexdigest()
 
-    def get(self, spec: 'CameraSpec', resolution_scale: float) -> Optional['CameraData']:
+    def get(
+        self,
+        spec_or_metadata: Union['CameraSpec', 'CameraMetaData'],
+        resolution_scale: float
+    ) -> Optional['CameraData']:
         """
         尝试从缓存获取数据。
 
         Args:
-            spec: CameraSpec实例
+            spec_or_metadata: CameraSpec或CameraMetaData实例
             resolution_scale: 分辨率缩放因子
 
         Returns:
@@ -88,7 +123,16 @@ class DataCache:
         if not self.enabled:
             return None
 
-        cache_key = self._get_cache_key(spec, resolution_scale)
+        # Determine cache key based on input type
+        if hasattr(spec_or_metadata, 'image_name'):
+            # Old CameraSpec (has image_name attribute)
+            cache_key = self._get_cache_key_from_spec(spec_or_metadata, resolution_scale)
+            name = spec_or_metadata.image_name
+        else:
+            # New CameraMetaData (no image_name attribute, has image_path)
+            cache_key = self._get_cache_key_from_metadata(spec_or_metadata, resolution_scale)
+            name = spec_or_metadata.image_path.stem
+
         cache_path = self.cache_dir / f"{cache_key}.pt"
 
         if not cache_path.exists():
@@ -96,7 +140,7 @@ class DataCache:
 
         try:
             data = torch.load(cache_path)
-            logger.debug(f"Cache hit: {spec.image_name}")
+            logger.debug(f"Cache hit: {name}")
             return data
         except Exception as e:
             # 缓存损坏，删除并返回None
@@ -107,38 +151,52 @@ class DataCache:
                 pass
             return None
 
-    def put(self, spec: 'CameraSpec', resolution_scale: float, data: 'CameraData'):
+    def put(
+        self,
+        spec_or_metadata: Union['CameraSpec', 'CameraMetaData'],
+        resolution_scale: float,
+        data: 'CameraData'
+    ):
         """
         将数据放入缓存。
 
         Args:
-            spec: CameraSpec实例
+            spec_or_metadata: CameraSpec或CameraMetaData实例
             resolution_scale: 分辨率缩放因子
             data: CameraData实例
         """
         if not self.enabled:
             return
 
-        cache_key = self._get_cache_key(spec, resolution_scale)
+        # Determine cache key based on input type
+        if hasattr(spec_or_metadata, 'image_name'):
+            # Old CameraSpec (has image_name attribute)
+            cache_key = self._get_cache_key_from_spec(spec_or_metadata, resolution_scale)
+            name = spec_or_metadata.image_name
+        else:
+            # New CameraMetaData (no image_name attribute, has image_path)
+            cache_key = self._get_cache_key_from_metadata(spec_or_metadata, resolution_scale)
+            name = spec_or_metadata.image_path.stem
+
         cache_path = self.cache_dir / f"{cache_key}.pt"
 
         try:
             torch.save(data, cache_path)
-            logger.debug(f"Cached: {spec.image_name}")
+            logger.debug(f"Cached: {name}")
         except Exception as e:
-            logger.warning(f"Failed to cache data for {spec.image_name}: {e}")
+            logger.warning(f"Failed to cache data for {name}: {e}")
 
-    def invalidate(self, spec: Optional['CameraSpec'] = None):
+    def invalidate(self, spec_or_metadata: Optional[Union['CameraSpec', 'CameraMetaData']] = None):
         """
         失效缓存。
 
         Args:
-            spec: CameraSpec实例，如果为None则清空所有缓存
+            spec_or_metadata: CameraSpec或CameraMetaData实例，如果为None则清空所有缓存
         """
         if not self.enabled:
             return
 
-        if spec is None:
+        if spec_or_metadata is None:
             # 清空所有缓存
             count = 0
             for cache_file in self.cache_dir.glob("*.pt"):
@@ -151,8 +209,18 @@ class DataCache:
         else:
             # 失效特定相机的缓存（需要尝试不同的resolution_scale）
             count = 0
+            name = (spec_or_metadata.image_name
+                    if hasattr(spec_or_metadata, 'image_name')
+                    else spec_or_metadata.image_path.stem)
+
             for resolution_scale in [1.0, 2.0, 4.0, 8.0]:
-                cache_key = self._get_cache_key(spec, resolution_scale)
+                if hasattr(spec_or_metadata, 'image_name'):
+                    # Old CameraSpec
+                    cache_key = self._get_cache_key_from_spec(spec_or_metadata, resolution_scale)
+                else:
+                    # New CameraMetaData
+                    cache_key = self._get_cache_key_from_metadata(spec_or_metadata, resolution_scale)
+
                 cache_path = self.cache_dir / f"{cache_key}.pt"
                 if cache_path.exists():
                     try:
@@ -160,7 +228,7 @@ class DataCache:
                         count += 1
                     except Exception as e:
                         logger.warning(f"Failed to delete cache file {cache_path}: {e}")
-            logger.info(f"Invalidated {count} cache entries for {spec.image_name}")
+            logger.info(f"Invalidated {count} cache entries for {name}")
 
     def get_cache_size(self) -> int:
         """

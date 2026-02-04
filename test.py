@@ -419,6 +419,19 @@ def get_lidar_depth():
         ).squeeze(0)
         save_image(scalar_to_color(depth_map.flatten()).reshape(720, 960, 3), f'{output_folder}/{os.path.basename(depth_file)}.jpg')
 
+def test_pipeline():
+    from transformers import pipeline, AutoModelForZeroShotObjectDetection, GroundingDinoForObjectDetection
+
+    detector = pipeline(model="google/owlvit-base-patch32", task="zero-shot-object-detection")
+    detector(
+        "http://images.cocodataset.org/val2017/000000039769.jpg",
+        candidate_labels=["cat", "couch"],
+    )
+
+    detector(
+        "https://huggingface.co/datasets/Narsil/image_dummy/raw/main/parrots.png",
+        candidate_labels=["head", "bird"],
+    )
 def main():
     # pth_to_json()
     # sam_masks_rgb()
@@ -431,7 +444,8 @@ def main():
     # test_umap()
     # test_qwenvl()
     # cost_volume(torch.randn(1, 3, 256, 256), torch.randn(1, 3, 256, 256))
-    get_lidar_depth()
+    # get_lidar_depth()
+    test_pipeline()
 
 if __name__ =='__main__':
     main()

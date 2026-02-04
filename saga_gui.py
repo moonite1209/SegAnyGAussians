@@ -12,7 +12,7 @@ from sklearn.decomposition import PCA
 from scene import GaussianModel, FeatureGaussianModel
 import dearpygui.dearpygui as dpg
 import math
-from scene.cameras import Camera
+from scene.camera import Camera
 from utils.graphics_utils import focal2fov, fov2focal
 
 from scipy.spatial.transform import Rotation as R

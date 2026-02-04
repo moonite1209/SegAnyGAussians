@@ -2,20 +2,20 @@
 Enhanced CameraDataset with support for lazy loading, caching, and optimized data loading.
 
 This module provides a new CameraDataset implementation that:
-- Uses CameraSpec for metadata (lightweight)
+- Uses CameraParams and CameraMetaData for metadata (lightweight, separated)
 - Supports lazy loading to reduce memory usage
 - Integrates with DataCache for faster repeated access
 - Works seamlessly with PyTorch DataLoader
 """
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 import logging
 
-from scene.camera_new import Camera
-from scene.camera_spec import CameraSpec
+from scene.camera import TrainCamera
+from scene.camera_spec import CameraParams, CameraMetaData, from_camera_info
 from scene.camera_data import CameraData
 from utils.camera_loader import CameraLoader, DataLoadError
 from utils.data_cache import DataCache
@@ -28,14 +28,14 @@ class CameraDataset(Dataset):
     """
     Enhanced camera dataset with lazy loading and caching support.
 
-    This dataset stores only CameraSpec objects (lightweight metadata) in memory,
+    This dataset stores only (CameraParams, CameraMetaData) tuples (lightweight metadata) in memory,
     and loads actual image data on-demand. It supports:
     - Lazy loading: data is loaded when accessed
     - Caching: processed data is cached for faster repeated access
     - Memory management: explicit unload() to free memory
 
     Args:
-        specs: List of CameraSpec objects containing camera metadata
+        camera_tuples: List of (CameraParams, CameraMetaData) tuples
         resolution_scale: Scale factor for resolution (1.0 = full resolution)
         resolution: Target resolution (1, 2, 4, 8, -1, or custom)
         lazy_load: If True, load data on-demand; if False, load all data upfront
@@ -44,15 +44,15 @@ class CameraDataset(Dataset):
         data_device: Device to load data onto ('cuda' or 'cpu')
 
     Examples:
-        >>> specs = [CameraSpec.from_camera_info(info) for info in cam_infos]
-        >>> dataset = CameraDataset(specs, resolution_scale=1.0, resolution=1)
+        >>> tuples = [(params1, metadata1), (params2, metadata2), ...]
+        >>> dataset = CameraDataset(camera_tuples, resolution_scale=1.0, resolution=1)
         >>> camera = dataset[0]  # Loads first camera
         >>> image = camera.original_image  # Access image data
     """
 
     def __init__(
         self,
-        specs: List[CameraSpec],
+        camera_tuples: List[Tuple[CameraParams, CameraMetaData]],
         resolution_scale: float = 1.0,
         resolution: int = 1,
         lazy_load: bool = True,
@@ -60,7 +60,7 @@ class CameraDataset(Dataset):
         cache_dir: Optional[Path] = None,
         data_device: str = "cuda"
     ):
-        self.specs = specs
+        self.camera_tuples = camera_tuples
         self.resolution_scale = resolution_scale
         self.resolution = resolution
         self.lazy_load = lazy_load
@@ -73,18 +73,18 @@ class CameraDataset(Dataset):
         self.cache = DataCache(cache_dir, enabled=use_cache) if use_cache else None
 
         # Store loaded cameras (for non-lazy mode)
-        self._loaded_cameras: dict[int, Camera] = {}
+        self._loaded_cameras: dict[int, TrainCamera] = {}
 
         logger.info(
-            f"Created CameraDataset with {len(specs)} cameras "
+            f"Created CameraDataset with {len(camera_tuples)} cameras "
             f"(lazy_load={lazy_load}, use_cache={use_cache}, device={data_device})"
         )
 
     def __len__(self) -> int:
         """Return the number of cameras in the dataset."""
-        return len(self.specs)
+        return len(self.camera_tuples)
 
-    def __getitem__(self, idx: int) -> Camera:
+    def __getitem__(self, idx: int) -> TrainCamera:
         """
         Get a camera by index.
 
@@ -98,22 +98,22 @@ class CameraDataset(Dataset):
             idx: Camera index
 
         Returns:
-            Camera object with all metadata and data
+            TrainCamera object with all metadata and data
         """
         # If already loaded (non-lazy mode), return directly
         if idx in self._loaded_cameras:
             return self._loaded_cameras[idx]
 
-        spec = self.specs[idx]
+        params, metadata = self.camera_tuples[idx]
 
         # Try to load from cache
         if self.cache is not None:
-            cached_data = self.cache.get(spec, self.resolution_scale)
+            cached_data = self.cache.get(metadata, self.resolution_scale)
             if cached_data is not None:
-                camera = Camera(
-                    spec,
-                    data=cached_data,
-                    lazy_load=False  # Data is already loaded
+                camera = TrainCamera(
+                    params,
+                    metadata,
+                    data=cached_data
                 )
                 camera.to(self.data_device)
 
@@ -124,20 +124,20 @@ class CameraDataset(Dataset):
 
         # Load from disk
         try:
-            data = self.loader.load(spec)
+            data = self.loader._load_from_params_and_metadata(params, metadata)
         except DataLoadError as e:
             logger.error(f"Failed to load camera {idx}: {e}")
             raise
 
         # Put into cache
         if self.cache is not None:
-            self.cache.put(spec, self.resolution_scale, data)
+            self.cache.put(metadata, self.resolution_scale, data)
 
         # Create camera
-        camera = Camera(
-            spec,
-            data=data,
-            lazy_load=self.lazy_load
+        camera = TrainCamera(
+            params,
+            metadata,
+            data=data
         )
         camera.to(self.data_device)
 
@@ -217,12 +217,12 @@ def cameraDataset_from_camInfos(
         >>> dataset = cameraDataset_from_camInfos(cam_infos, 1, 1.0)
         >>> loader = torch.utils.data.DataLoader(dataset, batch_size=1)
     """
-    # Convert CameraInfo to CameraSpec
-    specs = [CameraSpec.from_camera_info(info) for info in cam_infos]
+    # Convert CameraInfo to (CameraParams, CameraMetaData) tuples
+    camera_tuples = [from_camera_info(info) for info in cam_infos]
 
     # Create dataset
     dataset = CameraDataset(
-        specs=specs,
+        camera_tuples=camera_tuples,
         resolution_scale=resolution_scale,
         resolution=resolution,
         lazy_load=lazy_load,
