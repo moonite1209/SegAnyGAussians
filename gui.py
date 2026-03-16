@@ -17,13 +17,15 @@ from sklearn.preprocessing import minmax_scale
 from scene import GaussianModel, FeatureGaussianModel
 import dearpygui.dearpygui as dpg
 import math
-from scene.camera import Camera, MiniCamera
 from utils.general_utils import safe_state
-from utils.graphics_utils import focal2fov, fov2focal
+from utils.graphics_utils import fov2focal
+from saga_data.light_camera import LightCamera
+from saga_data.specs import CameraParams
 
 from scipy.spatial.transform import Rotation as R
 import hydra
 from omegaconf import DictConfig, OmegaConf
+from saga_config import GuiAppConfig, GuiConfig, ModelConfig, PipeConfig
 from enum import Enum, Flag, auto
 
 from utils.visualization_utils import labels_to_color
@@ -156,19 +158,19 @@ class GUI:
     def image_width(self):
         return int(self.window_width * 0.9)
     
-    def __init__(self, args, feature_gaussians, background_color, background_feature, pipe):
+    def __init__(self, gui_cfg: GuiConfig, feature_gaussians, background_color, background_feature, pipe):
         self.feature_gaussians = feature_gaussians
         self.background_color = background_color
         self.background_feature = background_feature
         self.pipe = pipe
-        self.window_height = args.window_height
-        self.window_width = args.window_width
+        self.window_height = gui_cfg.window_height
+        self.window_width = gui_cfg.window_width
         self.orbit_camera = OrbitCamera(self.image_width, self.image_height)
         self.should_update_image = True
         self.render_mode = RenderMode.rgb
         self.filter_mode = FilterMode.none
         self.label = None
-        self.point_label, self.cluster_class = self.load_file(args.json_path)
+        self.point_label, self.cluster_class = self.load_file(gui_cfg.json_path)
         self.pca = self.load_pca()
         self.override_color = labels_to_color(torch.tensor(self.point_label)).to('cuda')
 
@@ -340,7 +342,7 @@ class GUI:
         image = self.render()
         dpg.set_value("texture", image.flatten())
 
-    def construct_camera(self) -> MiniCamera:
+    def construct_camera(self) -> LightCamera:
         if self.orbit_camera.rot_mode == 1:
             pose = self.orbit_camera.pose_movecenter
         elif self.orbit_camera.rot_mode == 0:
@@ -353,17 +355,19 @@ class GUI:
         fovy = self.orbit_camera.fovy * ss
 
         fy = fov2focal(fovy, self.image_height)
-        fovx = focal2fov(fy, self.image_width)
-
-        return MiniCamera(
-            colmap_id=0,
+        fx = fy
+        params = CameraParams(
             R=R,
             T=t,
-            FoVx=fovx,
-            FoVy=fovy,
-            image_height=self.image_height,
-            image_width=self.image_width,
-            uid=0)
+            uid=0,
+            width=self.image_width,
+            height=self.image_height,
+            fx=fx,
+            fy=fy,
+            cx=self.image_width / 2,
+            cy=self.image_height / 2,
+        )
+        return LightCamera.from_params(params)
 
     def filter_mask(self, gaussians: FeatureGaussianModel):
         mask = torch.ones(gaussians.get_xyz.shape[0], dtype=torch.bool, device="cuda")
@@ -398,9 +402,9 @@ class GUI:
                 rendered_image = render(camera, self.feature_gaussians, self.pipe, self.background_color, override_color=self.override_color, filtered_mask=~filter_mask)['render'].detach().permute(1,2,0).cpu().numpy()
         torch.cuda.empty_cache()
         return rendered_image
-def load_model(args, model):
+def load_model(gui_cfg: GuiConfig, model: ModelConfig):
     feature_gaussians = FeatureGaussianModel(model.sh_degree, model.instance_feature_dim, model.semantic_feature_dim)
-    feature_gaussians.load_ply(args.feature_point_cloud_path)
+    feature_gaussians.load_ply(gui_cfg.feature_point_cloud_path)
     feature_gaussians.eval()
     background_color = torch.tensor([1.]*3 if model.white_background else [0.]*3, dtype=torch.float32, device="cuda")
     background_feature = torch.tensor([0.]*model.instance_feature_dim, dtype=torch.float32, device="cuda")
@@ -408,13 +412,14 @@ def load_model(args, model):
 
 @hydra.main(config_path="configs", config_name="gui", version_base=None)
 def main(cfg: DictConfig):
-    model = cfg.model
-    dataset = cfg.dataset
-    pipe = cfg.pipe
-    args = cfg.gui
-    safe_state(args.quiet)
-    feature_gaussians, background_color, background_feature = load_model(args, model)
-    GUI(args, feature_gaussians, background_color, background_feature, pipe)
+    app_cfg = GuiAppConfig(**OmegaConf.to_container(cfg, resolve=True))
+    model: ModelConfig = app_cfg.model
+    pipe: PipeConfig = app_cfg.pipe
+    gui_cfg: GuiConfig = app_cfg.gui
+
+    safe_state(gui_cfg.quiet)
+    feature_gaussians, background_color, background_feature = load_model(gui_cfg, model)
+    GUI(gui_cfg, feature_gaussians, background_color, background_feature, pipe)
 
 if __name__ == "__main__":
     main()

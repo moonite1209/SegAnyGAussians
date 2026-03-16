@@ -1,0 +1,22 @@
+# Clustering stage parameters
+classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
+selected_classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
+segment_masks_dir: 'data/dianchang/saga/masks'
+segment_labels_dir: 'data/dianchang/saga/labels'
+segment_label_features_path: 'data/dianchang/saga/labels/label_features.pt'
+feature_point_cloud_path: 'data/dianchang/saga/feature_training/final/feature_point_cloud.ply'
+json_path: 'data/dianchang/saga/output.json'
+clean: false
+quiet: false
+k: 256
+instance_feature_ratio: 0.3
+semantic_feature_ratio: 0.3
+xyz_feature_ratio: 0.4
+instance_threshold: 0.25
+background_threshold: 0.5
+scale_threshold: 0.8
+opacity_threshold: 0.01
+sample_num: -1
+use_sor: true
+sor_nb_neighbors: 50
+sor_std_ratio: 0.05

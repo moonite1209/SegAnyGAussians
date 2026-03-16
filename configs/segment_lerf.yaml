@@ -1,0 +1,4 @@
+defaults:
+  - dataset: lerf
+  - segment: lerf
+  - _self_

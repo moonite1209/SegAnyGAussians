@@ -6,13 +6,9 @@ from tqdm import tqdm
 from gaussian_renderer import render
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams
-# from gaussian_renderer import GaussianModel
-
-# from scene.gaussian_model import GaussianModel
 from scene import GaussianModel
-from scene.dataset_readers import readColmapCameras, read_extrinsics_binary, read_intrinsics_binary, read_extrinsics_text, read_intrinsics_text
-from utils.camera_utils import cameraList_from_camInfos
-from utils.visualization_utils import save_image
+from saga_data import RenderDataset, build_scene_index, move_sample_to_device
+from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 
 
@@ -22,19 +18,18 @@ pp = PipelineParams(parser)
 parser.add_argument("--scale", type=float, default=1.0)
 parser.add_argument("--render_path", type=str, required=True)
 args = parser.parse_args(sys.argv[1:])
+pipe = pp.extract(args)
 bg_color = torch.tensor([1,1,1] if args.white_background else [0, 0, 0], dtype=torch.float32, device="cuda")
 
 gs_model = GaussianModel(args.sh_degree)
 gs_model.load_ply(args.point_cloud_path)
-try:
-    cameras = readColmapCameras(read_extrinsics_binary(os.path.join(args.sparse_path, 'images.bin')), 
-                                read_intrinsics_binary(os.path.join(args.sparse_path, 'cameras.bin')), 
-                                args.images_path)
-except:
-    cameras = readColmapCameras(read_extrinsics_text(os.path.join(args.sparse_path, 'images.txt')), 
-                                read_intrinsics_text(os.path.join(args.sparse_path, 'cameras.txt')), 
-                                args.images_path)
-camera_list = cameraList_from_camInfos(cameras, 1, args)
+scene_index = build_scene_index(args)
+camera_dataset = RenderDataset(
+    scene_index,
+    indices=list(range(len(scene_index.specs))),
+    resolution=getattr(args, "resolution", 1),
+)
+camera_loader = DataLoader(camera_dataset, batch_size=None, shuffle=False, num_workers=0, pin_memory=True)
 
 with open(args.json_path,'r') as f:
     output = json.load(f)
@@ -44,7 +39,9 @@ precompute_color = color_map[point_labels]
 smooth_weights=None
 
 os.makedirs(args.render_path, exist_ok=True)
-for i, camera in tqdm(list(enumerate(camera_list))):
-    render_pkg = render(camera, gs_model, args, bg_color, override_color = precompute_color)
+for sample in tqdm(camera_loader):
+    move_sample_to_device(sample, "cuda")
+    camera = sample.camera
+    render_pkg = render(camera, gs_model, pipe, bg_color, override_color = precompute_color)
     image = render_pkg["render"]
-    save_image(image, os.path.join(args.render_path, f'{camera.image_name}.jpg'))
+    save_image(image, os.path.join(args.render_path, f'{sample.image_name}.jpg'))

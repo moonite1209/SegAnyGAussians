@@ -1,5 +1,6 @@
+# GUI parameters
+feature_point_cloud_path: 'data/default/saga/feature_training/final/feature_point_cloud.ply'
+json_path: 'data/default/saga/output.json'
 quiet: false
-feature_point_cloud_path: '${base_path}/saga/contrastive_feature_point_cloud.ply'
-json_path: '${base_path}/saga/output.json'
 window_height: 1080
 window_width: 1920

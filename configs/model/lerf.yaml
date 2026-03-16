@@ -1,0 +1,4 @@
+sh_degree: 0
+instance_feature_dim: 16
+semantic_feature_dim: 16
+white_background: false

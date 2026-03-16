@@ -4,23 +4,22 @@ import os
 import json
 import sys
 from datetime import datetime
+from pathlib import Path
 from tqdm import tqdm
-from gaussian_renderer import render_with_max_contributor, render_with_depth
+from gaussian_renderer import render_with_max_contributor
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams
-# from gaussian_renderer import GaussianModel
 import numpy as np
 import torch.nn.functional as F
 
-# from scene.gaussian_model import GaussianModel
-from scene import GaussianModel, FeatureGaussianModel
-from scene.dataset_readers import readColmapCameras, read_extrinsics_binary, read_intrinsics_binary, read_extrinsics_text, read_intrinsics_text
-from utils.camera_utils import cameraList_from_camInfos
-
+from scene import FeatureGaussianModel
 from scipy.spatial import KDTree
 from hdbscan import HDBSCAN
 
 from utils.general_utils import safe_state
+from saga_data import RenderDataset, build_scene_index, move_sample_to_device
+from saga_data.datastore import LocalDataStore
+from torch.utils.data import DataLoader
 
 def uniform_sample(N, n_samples, device = 'cuda:0'):
     # 生成均匀随机采样的索引
@@ -46,21 +45,21 @@ parser.add_argument("--opcity_threshold", type=float, default=0.01)
 parser.add_argument("--sample_num", type=int, default=-1)
 parser.add_argument("--classes", nargs="+", type=str, default=['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person'])
 args = parser.parse_args(sys.argv[1:])
+pipe = pp.extract(args)
 safe_state(args.quiet)
 
 bg_color = torch.tensor([1,1,1] if args.white_background else [0, 0, 0], dtype=torch.float32, device="cuda")
 
 feat_gs_model = FeatureGaussianModel(args.sh_degree, args.instance_feature_dim, args.semantic_feature_dim)
 feat_gs_model.load_ply(args.contrastive_feature_point_cloud_path)
-try:
-    cameras = readColmapCameras(read_extrinsics_binary(os.path.join(args.sparse_path, 'images.bin')), 
-                                read_intrinsics_binary(os.path.join(args.sparse_path, 'cameras.bin')), 
-                                args.images_path)
-except:
-    cameras = readColmapCameras(read_extrinsics_text(os.path.join(args.sparse_path, 'images.txt')), 
-                                read_intrinsics_text(os.path.join(args.sparse_path, 'cameras.txt')), 
-                                args.images_path)
-camera_list = cameraList_from_camInfos(cameras, 1, args)
+scene_index = build_scene_index(args)
+camera_dataset = RenderDataset(
+    scene_index,
+    indices=list(range(len(scene_index.specs))),
+    resolution=getattr(args, "resolution", 1),
+)
+camera_loader = DataLoader(camera_dataset, batch_size=None, shuffle=False, num_workers=0, pin_memory=True)
+datastore = LocalDataStore()
 
 point_features = feat_gs_model.get_instance_features.detach().cpu()
 point_xyz = feat_gs_model.get_xyz.detach().cpu()
@@ -151,34 +150,37 @@ if args.k>0:
 end_time = datetime.now()
 print(f'knn finish')
 
-vote = {instance: [0 for _ in range(len(args.classes)+1)] for instance in torch.unique(point_labels).tolist()}
-contribute = torch.zeros((point_xyz.shape[0]), dtype=torch.float32, device=point_labels.device, requires_grad=False)
-for i, camera in tqdm(list(enumerate(camera_list))):
+point_labels = point_labels.numpy()
+instances = np.unique(point_labels).tolist()
+vote = {instance: [0 for _ in range(len(args.classes)+1)] for instance in instances}
+contribute = torch.zeros((point_xyz.shape[0]), dtype=torch.float32, requires_grad=False)
+for i, sample in enumerate(tqdm(camera_loader, total=len(camera_dataset))):
     with open(args.progress_path, 'w') as f:
-        f.write(str((i+1)*100//len(camera_list)))
-    if not os.path.exists(os.path.join(args.masks_path, f'{camera.image_name}.pt')):
+        f.write(str((i+1)*100//len(camera_dataset)))
+    mask_path = os.path.join(args.masks_path, f'{sample.image_name}.pt')
+    label_path = os.path.join(args.labels_path, f'{sample.image_name}.pt')
+    if not os.path.exists(mask_path) or not os.path.exists(label_path):
         continue
-    masks = torch.load(os.path.join(args.masks_path, f'{camera.image_name}.pt'), weights_only=True).float()
-    masks = torch.nn.functional.interpolate(masks.unsqueeze(1), mode = 'bilinear', size = (camera.image_height, camera.image_width), align_corners = False).squeeze(1)
-    masks[masks>0.5] = 1
-    masks[masks!=1] = 0
-    masks = masks.bool()
-    labels = torch.load(os.path.join(args.labels_path, f'{camera.image_name}.pt'), weights_only=True)
-    render_pkg = render_with_max_contributor(camera, feat_gs_model, args, bg_color)
-    max_contributor = render_pkg['max_contributor'].detach().to(point_labels.device)
-    max_contribute = render_pkg['max_contribute'].detach().to(point_labels.device)
-    contribute += render_pkg['contribute'].detach().to(point_labels.device)
+    move_sample_to_device(sample, "cuda")
+    camera = sample.camera
+    masks = datastore.load_masks(Path(mask_path), (camera.image_width, camera.image_height)).numpy()
+    if masks.shape[0] == 0:
+        continue
+    labels = torch.load(label_path, weights_only=True).numpy()
+    render_pkg = render_with_max_contributor(camera, feat_gs_model, pipe, bg_color)
+    max_contributor = render_pkg['max_contributor'].detach().cpu().numpy()
+    contribute += render_pkg['contribute'].detach().cpu()
     max_instance_contributor = point_labels[max_contributor]
     background_label = len(args.classes)
-    background = torch.ones_like(masks[0])
+    background = np.ones_like(masks[0], dtype=bool)
     for label, mask in zip(labels, masks):
         background &= ~mask
         vote_for_label = max_instance_contributor[mask]
-        for instance in torch.unique(point_labels).tolist():
-            vote[instance][label]+=(vote_for_label==instance).sum().item()
+        for instance in instances:
+            vote[instance][label] += int((vote_for_label == instance).sum())
     vote_for_background_label = max_instance_contributor[background]
-    for instance in torch.unique(point_labels).tolist():
-        vote[instance][background_label]+=(vote_for_background_label==instance).sum().item()
+    for instance in instances:
+        vote[instance][background_label] += int((vote_for_background_label == instance).sum())
 
 def get_class(classes, votes):
     votes = np.array(votes)

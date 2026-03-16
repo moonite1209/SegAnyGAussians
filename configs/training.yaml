@@ -4,5 +4,3 @@ defaults:
   - pipe: default
   - training: farsee
   - _self_
-
-base_path: data/default

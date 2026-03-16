@@ -10,7 +10,8 @@
 #
 
 import torch
-from scene import Scene, GaussianModel, FeatureGaussianModel
+from scene import GaussianModel, FeatureGaussianModel
+from saga_data import RenderDataset, build_scene_index, move_sample_to_device
 import os
 from tqdm import tqdm
 from os import makedirs
@@ -20,8 +21,9 @@ import torchvision
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
+from torch.utils.data import DataLoader
 
-def render_set(model_path, name, iteration, views, gaussians, pipeline, background, target, precomputed_mask = None):
+def render_set(model_path, name, iteration, dataloader, gaussians, pipeline, background, target, precomputed_mask = None):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
     mask_path = os.path.join(model_path, name, "ours_{}".format(iteration), "mask")
@@ -39,8 +41,9 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     else:
         render_func = render
 
-    for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-
+    for idx, sample in enumerate(tqdm(dataloader, desc="Rendering progress")):
+        move_sample_to_device(sample, "cuda")
+        view = sample.camera
         res = render_func(view, gaussians, pipeline, background)
 
         if target == 'seg':
@@ -48,7 +51,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
             mask_res = render_mask(view, gaussians, pipeline, background, precomputed_mask=precomputed_mask)
 
         rendering = res["render"]
-        gt = view.original_image[0:3, :, :]
+        gt = sample.image[0:3, :, :]
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
         if target == 'seg':
             mask = mask_res["mask"]
@@ -70,6 +73,8 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
     if segment:
         assert target == 'seg' or target == 'coarse_seg_everything' or precomputed_mask is not None and "Segmentation only works with target seg!"
     gaussians, feature_gaussians = None, None
+    instance_feature_dim = getattr(dataset, "instance_feature_dim", getattr(dataset, "feature_dim", 32))
+    semantic_feature_dim = getattr(dataset, "semantic_feature_dim", instance_feature_dim)
     with torch.no_grad():
         if precomputed_mask is not None:
             if '.pt' in precomputed_mask:
@@ -84,9 +89,9 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         if target == 'scene' or target == 'seg' or target == 'coarse_seg_everything' or target == 'xyz':
             gaussians = GaussianModel(dataset.sh_degree)
         if target == 'feature' or target == 'coarse_seg_everything' or target == 'contrastive_feature':
-            feature_gaussians = FeatureGaussianModel(dataset.feature_dim)
+            feature_gaussians = FeatureGaussianModel(dataset.sh_degree, instance_feature_dim, semantic_feature_dim)
 
-        scene = Scene(dataset, gaussians, feature_gaussians, load_iteration=iteration, shuffle=False, mode='eval', target=target if target != 'xyz' and precomputed_mask is None else 'scene')
+        scene_index = build_scene_index(dataset)
 
         if segment:
             gaussians.segment(precomputed_mask)
@@ -94,15 +99,46 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         if 'feature' in target:
             gaussians = feature_gaussians
-            bg_color = [1 for i in range(dataset.feature_dim)] if dataset.white_background else [0 for i in range(dataset.feature_dim)]
+            bg_color = [1 for i in range(instance_feature_dim)] if dataset.white_background else [0 for i in range(instance_feature_dim)]
 
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
+        train_dataset = RenderDataset(
+            scene_index,
+            indices=scene_index.train_ids,
+            resolution=getattr(dataset, "resolution", 1),
+        )
+        test_dataset = RenderDataset(
+            scene_index,
+            indices=scene_index.test_ids,
+            resolution=getattr(dataset, "resolution", 1),
+        )
+
         if not skip_train:
-             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, target, precomputed_mask=precomputed_mask)
+            render_set(
+                dataset.model_path,
+                "train",
+                iteration,
+                DataLoader(train_dataset, batch_size=None, shuffle=False, num_workers=0, pin_memory=True),
+                gaussians,
+                pipeline,
+                background,
+                target,
+                precomputed_mask=precomputed_mask,
+            )
 
         if not skip_test:
-             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, target, precomputed_mask=precomputed_mask)
+            render_set(
+                dataset.model_path,
+                "test",
+                iteration,
+                DataLoader(test_dataset, batch_size=None, shuffle=False, num_workers=0, pin_memory=True),
+                gaussians,
+                pipeline,
+                background,
+                target,
+                precomputed_mask=precomputed_mask,
+            )
 
 if __name__ == "__main__":
     # Set up command line argument parser

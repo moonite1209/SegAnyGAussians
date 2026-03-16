@@ -1,5 +1,4 @@
 defaults:
+  - dataset: farsee
   - segment: farsee
   - _self_
-
-base_path: data/default

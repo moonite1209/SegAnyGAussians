@@ -10,11 +10,13 @@
 #
 
 import os
+from pathlib import Path
 import torch
-from random import randint
+from torch.utils.data import DataLoader
 from gaussian_renderer import render, render_contrastive_feature, render_with_depth, render_with_max_contributor
 import sys
-from scene import FeatureScene, FeatureGaussianModel
+from scene import FeatureGaussianModel
+from saga_data import FeatureDataset, build_scene_index, move_sample_to_device
 from utils.general_utils import safe_state
 from utils.image_utils import psnr
 from utils.loss_utils import l1_loss
@@ -94,31 +96,56 @@ def farthest_point_sample(xyz, n_samples):
     mask[centroids] = True
     return mask
 
-def pickCamera(cameras):
-    view_stack = None
-    while True:
-        if not view_stack:
-            view_stack = cameras.copy()
-        camera = view_stack.pop(randint(0, len(view_stack)-1))
-        yield camera
-
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, debug_from):
     print("RFN weight:", opt.rfn)
     assert opt.ray_sample_rate > 0 or opt.num_sampled_rays > 0
 
     tb_writer = prepare_logger(dataset)
 
-    feature_gaussians = FeatureGaussianModel(dataset.sh_degree, dataset.feature_dim)
-    feature_gaussians.load_ply(dataset.point_cloud_path)
-    feature_gaussians.training_setup(opt)
-    feature_gaussians.eval()
-    feature_gaussians._instance_feature.requires_grad_()
-    # feature_gaussians._std.requires_grad_()
+    instance_feature_dim = getattr(dataset, "instance_feature_dim", getattr(dataset, "feature_dim", 32))
+    semantic_feature_dim = getattr(dataset, "semantic_feature_dim", instance_feature_dim)
 
-    scene = FeatureScene(dataset, feature_gaussians, shuffle=False, sample_rate=1.0)
+    feature_gaussians = FeatureGaussianModel(dataset.sh_degree, instance_feature_dim, semantic_feature_dim)
+    feature_gaussians.bootstrap_from_scene_ply(dataset.point_cloud_path)
+    feature_gaussians.training_setup(opt)
+    feature_gaussians.set_trainable(instance=True, semantic=False, geometry=False)
+
+    scene_index = build_scene_index(dataset)
+    masks_dir = getattr(dataset, "masks_path", None)
+    labels_dir = getattr(dataset, "labels_path", None)
+    if not masks_dir or not labels_dir:
+        raise ValueError("`train_contrastive_feature.py` requires `masks_path` and `labels_path` in the dataset arguments")
+    label_features_path = Path(labels_dir) / "label_features.pt"
+
+    train_dataset = FeatureDataset(
+        scene_index,
+        segment_masks_dir=str(masks_dir),
+        segment_labels_dir=str(labels_dir),
+        segment_label_features_path=str(label_features_path),
+        indices=scene_index.train_ids,
+        resolution=getattr(dataset, "resolution", 1),
+    )
+    test_dataset = FeatureDataset(
+        scene_index,
+        segment_masks_dir=str(masks_dir),
+        segment_labels_dir=str(labels_dir),
+        segment_label_features_path=str(label_features_path),
+        indices=scene_index.test_ids,
+        resolution=getattr(dataset, "resolution", 1),
+    )
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=None,
+        shuffle=True,
+        num_workers=os.cpu_count(),
+        pin_memory=True,
+        persistent_workers=os.cpu_count() > 0,
+        prefetch_factor=2 if os.cpu_count() > 0 else None,
+    )
+    train_iter = iter(train_dataloader)
 
     background = torch.tensor((1,1,1) if dataset.white_background else (0,0,0), dtype=torch.float32, device="cuda")
-    background_feature = torch.zeros([dataset.feature_dim], dtype=torch.float32, device="cuda")
+    background_feature = torch.zeros([instance_feature_dim], dtype=torch.float32, device="cuda")
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
@@ -126,21 +153,38 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter = 0
     iterations = opt.iterations
     if not opt.iterations:
-        iterations = min(len(scene.getTrainCameras())*10, 10000)
+        iterations = min(len(train_dataset) * 10, 10000)
     progress_bar = tqdm(range(first_iter, iterations), desc="Training progress")
     first_iter += 1
 
-    for iteration, viewpoint_cam in zip(range(first_iter, iterations + 1), pickCamera(scene.getTrainCameras())):
+    for iteration in range(first_iter, iterations + 1):
+        try:
+            sample = next(train_iter)
+        except StopIteration:
+            train_dataloader = DataLoader(
+                train_dataset,
+                batch_size=None,
+                shuffle=True,
+                num_workers=os.cpu_count(),
+                pin_memory=True,
+                persistent_workers=os.cpu_count() > 0,
+                prefetch_factor=2 if os.cpu_count() > 0 else None,
+            )
+            train_iter = iter(train_dataloader)
+            sample = next(train_iter)
+
+        move_sample_to_device(sample, "cuda")
+        viewpoint_cam = sample.camera
         with open(args.progress_path, 'w') as f:
             f.write(str((iteration)*100//iterations))
         torch.cuda.synchronize()
         iter_start.record()
 
-        if viewpoint_cam.original_masks is None or viewpoint_cam.original_masks.shape[0] == 0:
+        if sample.masks.shape[0] == 0:
             continue
         with torch.no_grad():
             # N_mask, H, W
-            sam_masks = viewpoint_cam.original_masks.cuda() # float[masks, h, w]
+            sam_masks = sample.masks  # bool[masks, h, w]
             N,H,W = sam_masks.shape
 
             background_mask = ~sam_masks.any(dim=0)
@@ -260,7 +304,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             })
             progress_bar.update(10)
 
-        training_report(tb_writer, testing_iterations, scene, 
+        training_report(tb_writer, testing_iterations, train_dataset, test_dataset, feature_gaussians,
                         iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_start.elapsed_time(iter_end), 
                         get_render_image = lambda viewpoint: render(viewpoint, feature_gaussians, pipe, background)['render'].detach(), 
                         get_feature_map = lambda viewpoint: render_contrastive_feature(viewpoint, feature_gaussians, pipe, background_feature)['render'].detach(),
@@ -280,10 +324,10 @@ def prepare_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_time, get_render_image, get_feature_map, get_depth_map):
+def training_report(tb_writer, testing_iterations, train_dataset, test_dataset, feature_gaussians, iteration, loss, positive_loss, negative_loss, norm_loss, distance_loss, outview_loss, iter_time, get_render_image, get_feature_map, get_depth_map):
     if tb_writer is None:
         return
-    gaussians = scene.feature_gaussians
+    gaussians = feature_gaussians
     if tb_writer:
         tb_writer.add_scalar('train_loss/loss', loss.item(), iteration)
         tb_writer.add_scalar('train_loss/positive_loss', positive_loss.item(), iteration)
@@ -292,39 +336,46 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
         tb_writer.add_scalar('train_loss/distance_loss', distance_loss.item(), iteration)
         tb_writer.add_scalar('train_loss/outview_loss', outview_loss.item(), iteration)
         tb_writer.add_scalar('iter_time', iter_time, iteration)
-        tb_writer.add_scalar('scene/std', gaussians.get_std, iteration)
         tb_writer.add_scalar('grad/norm/mean', gaussians._instance_feature.grad.norm(dim=-1).mean(), iteration)
         tb_writer.add_scalar('grad/norm/std', gaussians._instance_feature.grad.norm(dim=-1).std(), iteration)
 
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
-        train_cameras = scene.getTrainCameras()
-        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
-                              {'name': 'train', 'cameras' : [train_cameras[idx % len(train_cameras)] for idx in range(0, len(train_cameras), len(train_cameras)//10+1)]})
+        validation_configs = (
+            {"name": "test", "dataset": test_dataset},
+            {"name": "train", "dataset": train_dataset},
+        )
 
         for config in validation_configs:
-            if config['cameras'] and len(config['cameras']) > 0:
+            if config['dataset'] and len(config['dataset']) > 0:
                 l1_test = 0.0
                 psnr_test = 0.0
-                for idx, viewpoint in enumerate(config['cameras']):
+                dataloader = DataLoader(config["dataset"], batch_size=None, shuffle=False, num_workers=0, pin_memory=True)
+                count = 0
+                for idx, sample in enumerate(dataloader):
+                    if idx >= 5:
+                        break
+                    move_sample_to_device(sample, "cuda")
+                    viewpoint = sample.camera
                     image = get_render_image(viewpoint)
-                    gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    mask_map = get_mask_map(viewpoint.original_masks).permute(2,0,1)
+                    gt_image = torch.clamp(sample.image, 0.0, 1.0)
+                    mask_map = get_mask_map(sample.masks).permute(2,0,1)
                     depth_map = get_depth_map(viewpoint)
                     feature_map = get_feature_map(viewpoint)
                     C,H,W = feature_map.shape
                     if tb_writer:
-                        tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/image/render", image[None], global_step=iteration)
-                        tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/feature/render", features_to_color(feature_map.reshape(C,-1).permute(1,0)).permute(1,0).reshape(-1,H,W)[None], global_step=iteration)
+                        tb_writer.add_images(f"{config['name']}_view_{sample.image_name}/image/render", image[None], global_step=iteration)
+                        tb_writer.add_images(f"{config['name']}_view_{sample.image_name}/feature/render", features_to_color(feature_map.reshape(C,-1).permute(1,0)).permute(1,0).reshape(-1,H,W)[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
-                            tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/image/ground_truth", gt_image[None], global_step=iteration)
-                            tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/feature/ground_truth", mask_map[None], global_step=iteration)
-                            tb_writer.add_images(f"{config['name']}_view_{viewpoint.image_name}/depth/ground_truth", scalar_to_color(depth_map[0].flatten()).permute(1,0).reshape(3,H,W)[None], global_step=iteration)
+                            tb_writer.add_images(f"{config['name']}_view_{sample.image_name}/image/ground_truth", gt_image[None], global_step=iteration)
+                            tb_writer.add_images(f"{config['name']}_view_{sample.image_name}/feature/ground_truth", mask_map[None], global_step=iteration)
+                            tb_writer.add_images(f"{config['name']}_view_{sample.image_name}/depth/ground_truth", scalar_to_color(depth_map[0].flatten()).permute(1,0).reshape(3,H,W)[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
-                psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras'])
+                    count += 1
+                psnr_test /= max(1, count)
+                l1_test /= max(1, count)
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 if tb_writer:
                     tb_writer.add_scalar(f"{config['name']}/loss_viewpoint - l1_loss", l1_test, iteration)
@@ -333,7 +384,7 @@ def training_report(tb_writer, testing_iterations, scene: FeatureScene, iteratio
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', gaussians.get_xyz.shape[0], iteration)
-            tb_writer.add_mesh(f'point_features', gaussians.get_xyz[None], colors=features_to_color(scene.feature_gaussians.get_instance_features)[None]*255, global_step=iteration)
+            tb_writer.add_mesh(f'point_features', gaussians.get_xyz[None], colors=features_to_color(feature_gaussians.get_instance_features)[None]*255, global_step=iteration)
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":

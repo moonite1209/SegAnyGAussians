@@ -1,0 +1,8 @@
+# Raw dataset paths (input data) for LERF
+base_path: data/lerf_ovs/default
+resolution: 1
+eval: false
+allow_principle_point_shift: false
+images_path: '${.base_path}/images'
+sparse_path: '${.base_path}/sparse'
+depth_path: null

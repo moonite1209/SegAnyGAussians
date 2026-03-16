@@ -1,0 +1,5 @@
+defaults:
+  - model: lerf
+  - pipe: default
+  - gui: lerf
+  - _self_

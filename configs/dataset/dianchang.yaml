@@ -1,0 +1,8 @@
+# Raw dataset paths (input data)
+base_path: data/dianchang
+resolution: 1
+eval: false
+allow_principle_point_shift: false
+images_path: '${.base_path}/images'
+sparse_path: null
+depth_path: null

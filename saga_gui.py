@@ -12,8 +12,9 @@ from sklearn.decomposition import PCA
 from scene import GaussianModel, FeatureGaussianModel
 import dearpygui.dearpygui as dpg
 import math
-from scene.camera import Camera
 from utils.graphics_utils import focal2fov, fov2focal
+from saga_data.light_camera import LightCamera
+from saga_data.specs import CameraParams
 
 from scipy.spatial.transform import Rotation as R
 
@@ -499,7 +500,7 @@ class GaussianSplattingGUI:
 
     def construct_camera(
         self,
-    ) -> Camera:
+    ) -> LightCamera:
         if self.camera.rot_mode == 1:
             pose = self.camera.pose_movecenter
         elif self.camera.rot_mode == 0:
@@ -512,20 +513,19 @@ class GaussianSplattingGUI:
         fovy = self.camera.fovy * ss
 
         fy = fov2focal(fovy, self.height)
-        fovx = focal2fov(fy, self.width)
-
-        cam = Camera(
-            colmap_id=0,
+        fx = fy
+        params = CameraParams(
             R=R,
             T=t,
-            FoVx=fovx,
-            FoVy=fovy,
-            image=torch.zeros([3, self.height, self.width]),
-            gt_alpha_mask=None,
-            image_name=None,
             uid=0,
+            width=self.width,
+            height=self.height,
+            fx=fx,
+            fy=fy,
+            cx=self.width / 2,
+            cy=self.height / 2,
         )
-        return cam
+        return LightCamera.from_params(params)
     
     def cluster_in_3D(self):
         ...
@@ -735,7 +735,7 @@ if __name__ == "__main__":
     opt.json_path = args.json_path
 
     gs_model = GaussianModel(opt.sh_degree)
-    feat_gs_model = FeatureGaussianModel(opt.sh_degree, opt.feature_dim)
+    feat_gs_model = FeatureGaussianModel(opt.sh_degree, opt.feature_dim, opt.feature_dim)
     gui = GaussianSplattingGUI(opt, gs_model, feat_gs_model)
 
     gui.render()

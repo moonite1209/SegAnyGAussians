@@ -19,7 +19,8 @@ from transformers import SamModel, SamProcessor
 from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
 import supervision as sv
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+from saga_config import DatasetConfig, SegmentAppConfig, SegmentConfig
 from hydra.utils import instantiate
 
 log = logging.getLogger(__name__)
@@ -628,22 +629,22 @@ def words_to_tensors(word_list: List[str], dim: int = 32, device: str = 'cpu') -
     
     return feats
 
-def prepare_output_folder(masks_path: str, labels_path: str, rgb_masks_path: Optional[str] = None):
+def prepare_output_folder(masks_dir: str, labels_dir: str, rgb_masks_dir: Optional[str] = None):
     """
     准备输出文件夹。
 
     Args:
-        masks_path: 掩码保存路径
-        labels_path: 标签保存路径
-        rgb_masks_path: RGB掩码保存路径（可选）
+        masks_dir: 掩码保存目录
+        labels_dir: 标签保存目录
+        rgb_masks_dir: RGB掩码保存目录（可选）
     """
-    Path(masks_path).mkdir(parents=True, exist_ok=True)
-    Path(labels_path).mkdir(parents=True, exist_ok=True)
-    if rgb_masks_path:
-        Path(rgb_masks_path).mkdir(parents=True, exist_ok=True)
+    Path(masks_dir).mkdir(parents=True, exist_ok=True)
+    Path(labels_dir).mkdir(parents=True, exist_ok=True)
+    if rgb_masks_dir:
+        Path(rgb_masks_dir).mkdir(parents=True, exist_ok=True)
 
 def segment_one_image(
-    args: DictConfig,
+    args: SegmentConfig,
     image_path: Path,
     ovsegmenter: OVSegmenter
 ) -> SegmentationResult:
@@ -674,9 +675,9 @@ def segment_one_image(
 def save_result(
     result: SegmentationResult,
     image_path: Path,
-    masks_path: Path,
-    labels_path: Path,
-    rgb_masks_path: Optional[Path] = None
+    masks_dir: Path,
+    labels_dir: Path,
+    rgb_masks_dir: Optional[Path] = None
 ):
     """
     保存分割结果。
@@ -684,23 +685,23 @@ def save_result(
     Args:
         result: 分割结果（包含 classes 字段）
         image_path: 原始图像路径
-        masks_path: 掩码保存目录
-        labels_path: 标签保存目录
-        rgb_masks_path: RGB掩码保存目录（可选）
+        masks_dir: 掩码保存目录
+        labels_dir: 标签保存目录
+        rgb_masks_dir: RGB掩码保存目录（可选）
     """
     base_name = image_path.stem
 
     # 保存掩码
-    torch.save(torch.from_numpy(result.masks), masks_path / f'{base_name}.pt')
+    torch.save(torch.from_numpy(result.masks), masks_dir / f'{base_name}.pt')
 
     # 保存标签
     torch.save(
         torch.tensor(result.class_ids, dtype=torch.int64),
-        labels_path / f'{base_name}.pt'
+        labels_dir / f'{base_name}.pt'
     )
 
     # 保存RGB掩码（可选）
-    if not rgb_masks_path:
+    if not rgb_masks_dir:
         return
     # 读取原始图像用于可视化
     original_image = cv2.imread(str(image_path))
@@ -737,7 +738,7 @@ def save_result(
         annotated_image = original_image
 
     cv2.imwrite(
-        str(rgb_masks_path / f'{base_name}.jpg'),
+        str(rgb_masks_dir / f'{base_name}.jpg'),
         cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
     )
 
@@ -755,30 +756,32 @@ def main(cfg: DictConfig):
     4. 处理所有图像
     5. 保存结果
     """
-    args = cfg.segment
+    app_cfg = SegmentAppConfig(**OmegaConf.to_container(cfg, resolve=True))
+    dataset: DatasetConfig = app_cfg.dataset
+    args: SegmentConfig = app_cfg.segment
     log.info("Starting segmentation pipeline")
 
     # 准备输出文件夹
     prepare_output_folder(
-        args.masks_path,
-        args.labels_path,
-        args.rgb_masks_path
+        args.masks_dir,
+        args.labels_dir,
+        args.rgb_masks_dir
     )
 
     # 创建分割器（使用 hydra instantiate）
     log.info("Creating segmenter...")
-    ovsegmenter = instantiate(args.ovsegmenter)
+    ovsegmenter = instantiate(args.ovsegmenter.dump_model(by_alias=True, exclude_none=True))
 
     # 生成类别特征
     log.info("Generating class features...")
     label_features = words_to_tensors(args.classes, dim=DEFAULT_FEATURE_DIM)
     torch.save(
         label_features,
-        Path(args.labels_path) / 'label_features.pt'
+        Path(args.label_features_path)
     )
 
     # 处理图像
-    images_dir = Path(args.images_path)
+    images_dir = Path(dataset.images_path)
     image_files = sorted(images_dir.glob('*.jpg'))
 
     if len(image_files) == 0:
@@ -794,9 +797,9 @@ def main(cfg: DictConfig):
             save_result(
                 result,
                 image_path,
-                masks_path=Path(args.masks_path),
-                labels_path=Path(args.labels_path),
-                rgb_masks_path=Path(args.rgb_masks_path) if args.get('rgb_masks_path') else None
+                masks_dir=Path(args.masks_dir),
+                labels_dir=Path(args.labels_dir),
+                rgb_masks_dir=Path(args.rgb_masks_dir) if args.rgb_masks_dir else None
             )
             success_count += 1
         except Exception as e:

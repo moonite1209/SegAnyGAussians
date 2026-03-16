@@ -1,20 +1,15 @@
 import torch
-
-
-import numpy as np
-from matplotlib import pyplot as plt
-from PIL import Image
 from argparse import ArgumentParser, Namespace
-import cv2
+from pathlib import Path
 
 from arguments import ModelParams, PipelineParams
-from scene import Scene, GaussianModel, FeatureGaussianModel
+from scene import GaussianModel
+from saga_data import RenderDataset, build_scene_index, depth_to_camera_points, move_sample_to_device
 
 import gaussian_renderer
-import importlib
-importlib.reload(gaussian_renderer)
-
 import os
+from torch.utils.data import DataLoader
+from saga_data.datastore import LocalDataStore
 FEATURE_DIM = 32
 
 DATA_ROOT = './data/nerf_llff_data_for_3dgs/'
@@ -65,7 +60,6 @@ if __name__ == '__main__':
 
     parser = ArgumentParser(description="Get scales for SAM masks")
 
-    # model = ModelParams(parser, sentinel=True)
     model = ModelParams(parser)
     pipeline = PipelineParams(parser)
     parser.add_argument("--progress_path", type=str, required=True)
@@ -81,86 +75,61 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     dataset = model.extract(args)
+    pipe = pipeline.extract(args)
+    scene_index = build_scene_index(dataset)
 
     # ALLOW_PRINCIPLE_POINT_SHIFT = 'lerf' in args.model_path
     dataset.allow_principle_point_shift = ALLOW_PRINCIPLE_POINT_SHIFT
 
-    feature_gaussians = None
     scene_gaussians = GaussianModel(dataset.sh_degree)
+    scene_gaussians.load_ply(dataset.point_cloud_path)
 
-    scene = Scene(dataset, scene_gaussians, feature_gaussians, load_iteration=-1, feature_load_iteration=-1, shuffle=False, mode='eval', target='scene')
-
-
-    # assert os.path.exists(dataset.images_path) and "Please specify a valid image root."
     assert os.path.exists(dataset.masks_path) and "Please specify a valid masks root."
-
-    from tqdm import tqdm
-    # images_masks = {}
-    # for i, image_path in tqdm(enumerate(sorted(os.listdir(os.path.join(dataset.source_path, 'images'))))):
-    #     print(image_path)
-    #     image = cv2.imread(os.path.join(os.path.join(dataset.source_path, 'images'), image_path))
-    #     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    #     masks = torch.load(os.path.join(os.path.join(dataset.source_path, 'sam_masks'), image_path.replace('jpg', 'pt').replace('JPG', 'pt').replace('png', 'pt')))
-    #     # N_mask, C
-
-    #     images_masks[os.path.splitext(os.path.basename(image_path))[0]] = masks.cpu().float()
-
 
     OUTPUT_DIR = dataset.mask_scales_path
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+    render_dataset = RenderDataset(
+        scene_index,
+        indices=list(range(len(scene_index.specs))),
+        resolution=getattr(dataset, "resolution", 1),
+    )
+    dataloader = DataLoader(render_dataset, batch_size=None, shuffle=False, num_workers=0, pin_memory=True)
+    datastore = LocalDataStore()
+    background = torch.tensor([1, 1, 1] if dataset.white_background else [0, 0, 0], dtype=torch.float32, device='cuda')
+    erode_kernel = torch.full((1, 1, 3, 3), 1.0)
 
-    cameras = scene.getTrainCameras()
-
-    background = torch.zeros(scene_gaussians.get_mask.shape[0], 3, device = 'cuda')
-
-    for it, view in tqdm(list(enumerate(cameras))):
+    from tqdm import tqdm
+    for it, sample in enumerate(tqdm(dataloader, total=len(render_dataset))):
         with open(args.progress_path, 'w') as f:
-            f.write(str((it+1)*100//len(cameras)))
-        rendered_pkg = gaussian_renderer.render_with_depth(view, scene_gaussians, pipeline.extract(args), background)
+            f.write(str((it+1)*100//len(render_dataset)))
+        move_sample_to_device(sample, "cuda")
+        view = sample.camera
+        mask_path = Path(dataset.masks_path) / f"{sample.image_name}.pt"
+        if not mask_path.exists():
+            continue
+        rendered_pkg = gaussian_renderer.render_with_depth(view, scene_gaussians, pipe, background)
 
         depth = rendered_pkg['depth'] # pixel-wise
 
-        # plt.imshow(depth.detach().cpu().squeeze().numpy())
-        # corresponding_masks = torch.load(os.path.join(dataset.source_path, 'sam_masks', f'{view.image_name}.pt')).cpu().float()
-        corresponding_masks = view.original_masks
-        if corresponding_masks == None:
+        corresponding_masks = datastore.load_masks(mask_path, (view.image_width, view.image_height)).cpu()
+        if corresponding_masks.numel() == 0:
             continue
-        else:
-            corresponding_masks = corresponding_masks.cpu().float()
-
-        # generate_grid_index(depth.squeeze())[50, 1]
 
         depth = depth.cpu().squeeze()
-
-        grid_index = generate_grid_index(depth)
-
-        points_in_3D = torch.zeros(depth.shape[0], depth.shape[1], 3).cpu() # pixel-wise 相机坐标系
-        points_in_3D[:,:,-1] = depth
-
-        # caluculate cx cy fx fy with FoVx FoVy
-        cx = depth.shape[1] / 2
-        cy = depth.shape[0] / 2
-        fx = cx / np.tan(cameras[0].FoVx / 2)
-        fy = cy / np.tan(cameras[0].FoVy / 2)
-
-
-        points_in_3D[:,:,0] = (grid_index[:,:,0] - cx) * depth / fx
-        points_in_3D[:,:,1] = (grid_index[:,:,1] - cy) * depth / fy
-
-        upsampled_mask = torch.nn.functional.interpolate(corresponding_masks.unsqueeze(1), mode = 'bilinear', size = (depth.shape[0], depth.shape[1]), align_corners = False)
+        points_in_3D = depth_to_camera_points(depth, view).cpu()
 
         eroded_masks = torch.conv2d(
-            upsampled_mask.float(),
-            torch.full((3, 3), 1.0).view(1, 1, 3, 3).to(upsampled_mask.device),
+            corresponding_masks.unsqueeze(1).float(),
+            erode_kernel,
             padding=1,
         )
         eroded_masks = (eroded_masks >= 5).squeeze(1)  # (num_masks, H, W)
 
         scale = torch.zeros(len(corresponding_masks))
         for mask_id in range(len(corresponding_masks)):
-            
             point_in_3D_in_mask = points_in_3D[eroded_masks[mask_id] == 1]
-
+            if point_in_3D_in_mask.numel() == 0:
+                continue
             scale[mask_id] = (point_in_3D_in_mask.std(dim=0) * 2).norm() # 对应论文公式(2)
 
-        torch.save(scale, os.path.join(OUTPUT_DIR, view.image_name + '.pt')) # float[masks]
+        torch.save(scale, os.path.join(OUTPUT_DIR, sample.image_name + '.pt')) # float[masks]

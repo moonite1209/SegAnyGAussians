@@ -1,8 +1,4 @@
-images_path: '${base_path}/fastRecon/dense/sparse/0/images'
-masks_path: '${base_path}/saga/masks'
-labels_path: '${base_path}/saga/labels'
-rgb_masks_path: '${base_path}/saga/rgb_masks'
-progress_path: null
+# Segment stage parameters
 classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
 
 # 分割器配置（组合检测器和分割器）
@@ -18,3 +14,7 @@ ovsegmenter:
     _target_: segment.SAMSegmenter
     model_id: "facebook/sam-vit-base"
     device: "cuda"
+masks_dir: '${dataset.base_path}/saga/masks'
+labels_dir: '${dataset.base_path}/saga/labels'
+label_features_path: '${dataset.base_path}/saga/labels/label_features.pt'
+rgb_masks_dir: '${dataset.base_path}/saga/rgb_masks'

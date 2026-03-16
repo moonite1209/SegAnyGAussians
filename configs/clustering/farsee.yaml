@@ -1,9 +1,11 @@
+# Clustering stage parameters
 classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
 selected_classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
-feature_point_cloud_path: '${base_path}/saga/contrastive_feature_point_cloud.ply'
-json_path: '${base_path}/saga/output.json'
-features_path: '${base_path}/saga/labels/label_features.pt'
-progress_path: null
+segment_masks_dir: 'data/default/saga/masks'
+segment_labels_dir: 'data/default/saga/labels'
+segment_label_features_path: 'data/default/saga/labels/label_features.pt'
+feature_point_cloud_path: 'data/default/saga/feature_training/final/feature_point_cloud.ply'
+json_path: 'data/default/saga/output.json'
 clean: false
 quiet: false
 k: 256
@@ -13,7 +15,7 @@ xyz_feature_ratio: 0.4
 instance_threshold: 0.25
 background_threshold: 0.5
 scale_threshold: 0.8
-opcity_threshold: 0.01
+opacity_threshold: 0.01
 sample_num: -1
 # SOR (Statistical Outlier Removal) parameters
 use_sor: true

@@ -1,0 +1,6 @@
+defaults:
+  - model: lerf
+  - dataset: lerf
+  - pipe: default
+  - training: lerf
+  - _self_

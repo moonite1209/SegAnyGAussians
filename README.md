@@ -8,6 +8,30 @@ The official implementation of [SAGA (Segment Any 3D GAussians)](https://arxiv.o
 <img src="./assets/saga-teaser.png" width="700px">
 </div>
 
+## Pipeline Note
+This repository now includes a new incompatible, throughput-first data pipeline under `saga_data/`.
+The legacy `scene/` camera pipeline is deprecated and kept only for historical reference.
+
+## Hydra + Pydantic Config
+The Hydra entry scripts (`segment.py`, `train_feature.py`, `cluster.py`, `gui.py`) now parse configs through `saga_config` for stronger type checks.
+
+Config layers:
+- `dataset/*`: shared dataset inputs used by `segment.py` and `train_feature.py`
+- `model/*`: shared model parameters
+- `pipe/*`: shared renderer parameters
+- `segment|training|clustering|gui/*`: stage parameters plus that stage's own input/output paths
+
+Common override examples:
+```bash
+python segment.py dataset=farsee segment=farsee dataset.base_path=data/my_scene
+python train_feature.py model=farsee dataset=farsee pipe=default training=farsee dataset.base_path=data/my_scene
+python cluster.py model=farsee clustering=farsee clustering.segment_masks_dir=data/my_scene/saga/masks clustering.segment_labels_dir=data/my_scene/saga/labels clustering.segment_label_features_path=data/my_scene/saga/labels/label_features.pt clustering.feature_point_cloud_path=data/my_scene/saga/feature_training/final/feature_point_cloud.ply clustering.json_path=data/my_scene/saga/output.json
+python gui.py model=farsee pipe=default gui=farsee gui.feature_point_cloud_path=data/my_scene/saga/feature_training/final/feature_point_cloud.ply gui.json_path=data/my_scene/saga/output.json
+```
+
+If a field is invalid, the script fails fast with a Pydantic validation error (for example: unknown field name, ratio sum not equal to 1.0, or invalid threshold range).
+
+
 # Installation
 The installation of SAGA is similar to [3D Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting).
 ```bash

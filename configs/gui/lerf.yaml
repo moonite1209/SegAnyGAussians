@@ -1,0 +1,6 @@
+# GUI parameters for LERF
+feature_point_cloud_path: 'output/lerf_ovs/default/feature_training/final/feature_point_cloud.ply'
+json_path: 'output/lerf_ovs/default/feature/output.json'
+quiet: false
+window_height: 1080
+window_width: 1920

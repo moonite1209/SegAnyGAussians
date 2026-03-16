@@ -1,0 +1,20 @@
+# Segment stage parameters for LERF
+classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
+
+# 分割器配置（组合检测器和分割器）
+ovsegmenter:
+  _target_: segment.OVDetectSegmenter
+  detector:
+    _target_: segment.GroundingDINODetector
+    model_id: "IDEA-Research/grounding-dino-tiny"
+    device: "cuda"
+    box_threshold: 0.35
+    text_threshold: 0.35
+  segmenter:
+    _target_: segment.SAMSegmenter
+    model_id: "facebook/sam-vit-base"
+    device: "cuda"
+masks_dir: 'output/lerf_ovs/default/feature/masks'
+labels_dir: 'output/lerf_ovs/default/feature/labels'
+label_features_path: 'output/lerf_ovs/default/feature/labels/label_features.pt'
+rgb_masks_dir: 'output/lerf_ovs/default/feature/rgb_masks'

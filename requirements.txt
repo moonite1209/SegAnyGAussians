@@ -1,17 +1,7 @@
-# conda create --name saga python=3.10 -c conda-forge
+# conda create -n saga python=3.10.19 -c conda-forge
 # conda activate saga
 # pip install torch==2.4.1+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
-# pip install -r requirements.txt
-# cd third_party/GroundingDINO
-# export CUDA_HOME=/usr/local/cuda
-# pip install .
-# cd ../..
-# mkdir weights
-# cd weights
-# cp ../third_party/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py ./GroundingDINO_SwinT_OGC.py
-# wget -q https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth
-# wget -q https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
-# cd ..
+# pip install --no-build-isolation -r requirements.txt
 torch==2.4.1+cu118
 torchvision==0.19.1+cu118
 torchaudio==2.4.1+cu118
@@ -20,18 +10,21 @@ tqdm
 opencv-python
 tensorboard
 matplotlib
-transformers
+transformers==5.0.0
 scikit-learn
 umap-learn
 dearpygui
 hdbscan
 joblib
 open3d
+pydantic
+hydra-core
+omegaconf
+pytest
 submodules/diff-gaussian-rasterization
 submodules/diff-gaussian-rasterization_contrastive_f
 submodules/diff-gaussian-rasterization-depth
 submodules/diff-gaussian-rasterization-max-contributor
 submodules/simple-knn
-third_party/segment-anything
 git+https://github.com/facebookresearch/pytorch3d.git@stable
 --extra-index-url https://download.pytorch.org/whl/cu118

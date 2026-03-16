@@ -1,8 +1,4 @@
 defaults:
   - model: farsee
-  - dataset: farsee
-  - pipe: default
   - clustering: farsee
   - _self_
-
-base_path: data/default

@@ -6,19 +6,19 @@ import sys
 from tqdm import tqdm
 from gaussian_renderer import render_with_max_contributor
 from argparse import ArgumentParser
-from arguments import ModelParams, PipelineParams
 import numpy as np
 import torch.nn.functional as F
-from scene import FeatureScene, FeatureGaussianModel
+from scene import FeatureGaussianModel
 from utils.general_utils import safe_state
-from torch.utils.data import DataLoader
 from sklearn.metrics.pairwise import pairwise_distances, cosine_similarity, pairwise_kernels
 from sklearn.preprocessing import minmax_scale, robust_scale, normalize
 from sklearn.cluster import HDBSCAN
 from sklearn.neighbors import KNeighborsClassifier
 from scipy.special import softmax
 import hydra
-from omegaconf import DictConfig
+from torch.utils.data import DataLoader
+from omegaconf import DictConfig, OmegaConf
+from saga_config import ClusteringAppConfig, ClusteringConfig, ModelConfig
 import open3d as o3d
 
 def uniform_sample(N, n_samples):
@@ -27,17 +27,11 @@ def uniform_sample(N, n_samples):
     mask[selected_indices] = True
     return mask
 
-def load_model(args, model):
+def load_model(args: ClusteringConfig, model: ModelConfig):
     feature_gaussians = FeatureGaussianModel(model.sh_degree, model.instance_feature_dim, model.semantic_feature_dim)
     feature_gaussians.load_ply(args.feature_point_cloud_path)
     feature_gaussians.eval()
-    background_color = torch.tensor([1.]*3 if model.white_background else [0.]*3, dtype=torch.float32, device="cuda")
-    background_feature = torch.tensor([0.]*model.instance_feature_dim, dtype=torch.float32, device="cuda")
-    return feature_gaussians, background_color, background_feature
-
-def load_cameras(dataset):
-    scene = FeatureScene(dataset)
-    return scene.getCameraDataset()
+    return feature_gaussians
 
 def get_sample_mask(total_num, sample_num):
     if sample_num < 0:
@@ -51,7 +45,7 @@ def feature_preprocess(features):
 def xyz_preprocess(xyz):
     return robust_scale(xyz)
 
-def hybird_clustering(args, instance_features, semantic_features, xyzs):
+def hybird_clustering(args: ClusteringConfig, instance_features, semantic_features, xyzs):
     
     # Compute distance matrices for instance and semantic features separately
     instance_distance_matrix = pairwise_distances(instance_features, metric='cosine')
@@ -86,11 +80,8 @@ def hybird_clustering(args, instance_features, semantic_features, xyzs):
 def distance_to_similarity(distance, gamma):
     return np.exp(-distance*gamma)
 
-def assign_label(args, clusters, instance_features, semantic_features, xyzs):
-    P, C_instance = instance_features.shape
-    P, C_semantic = semantic_features.shape
-    P, D = xyzs.shape
-    label = np.array([cluster['label'] for cluster in clusters])
+def assign_label(args: ClusteringConfig, clusters, instance_features, semantic_features, xyzs):
+    _, D = xyzs.shape
     
     # Extract separate feature centers
     instance_center = np.array([cluster['instance_feature_center'] for cluster in clusters])
@@ -110,7 +101,7 @@ def assign_label(args, clusters, instance_features, semantic_features, xyzs):
     is_valid = similarity.max(axis=1) > args.instance_threshold
     return np.where(is_valid, labels, -1)
 
-def labels_postprocess(args, xyzs, labels):
+def labels_postprocess(args: ClusteringConfig, xyzs, labels):
     knn = KNeighborsClassifier(n_neighbors=args.k, metric='euclidean', n_jobs=-1)
     knn.fit(xyzs, labels)
     return knn.predict(xyzs)
@@ -137,9 +128,8 @@ def sor_filter_outliers(points, nb_neighbors=20, std_ratio=2.0):
     
     return inlier_mask
 
-def clustering(args, raw_instance_features: np.ndarray, raw_semantic_features: np.ndarray, raw_xyzs: np.ndarray, class_masks: np.ndarray):
-    P, C_instance = raw_instance_features.shape
-    P, C_semantic = raw_semantic_features.shape
+def clustering(args: ClusteringConfig, raw_instance_features: np.ndarray, raw_semantic_features: np.ndarray, raw_xyzs: np.ndarray, class_masks: np.ndarray):
+    P = raw_instance_features.shape[0]
     assert raw_xyzs.shape[0] == P and raw_xyzs.shape[1] == 3
     labels = np.full((P,), -1, dtype='i8')
     base_label = 0
@@ -151,7 +141,7 @@ def clustering(args, raw_instance_features: np.ndarray, raw_semantic_features: n
         
         if masked_raw_instance_features.shape[0] == 0:
             continue
-        sample_mask, sample_num = get_sample_mask(masked_raw_instance_features.shape[0], args.sample_num)
+        sample_mask, _ = get_sample_mask(masked_raw_instance_features.shape[0], args.sample_num)
         masked_instance_features = feature_preprocess(masked_raw_instance_features)
         masked_semantic_features = feature_preprocess(masked_raw_semantic_features)
         masked_xyzs = xyz_preprocess(masked_raw_xyzs)
@@ -187,31 +177,24 @@ def clustering(args, raw_instance_features: np.ndarray, raw_semantic_features: n
         base_label += len(masked_clusters)
     return labels
 
-    # sample_mask, sample_num = get_sample_mask(P, args.sample_num)
-    # features = feature_preprocess(raw_features)
-    # xyzs = xyz_preprocess(raw_xyzs)
-    # sample_features = features[sample_mask]
-    # sample_xyzs = xyzs[sample_mask]
-    # clusters = hybird_clustering(args, sample_features, sample_xyzs)
-    # labels = assign_label(args, clusters, features, xyzs)
-    # labels = labels_postprocess(args, xyzs, labels)
-    # return labels
-
 def choose_class(classes, vote):
     vote, backgound_vote = vote[:-1], vote[-1]
     if vote.max() <= backgound_vote:
         return 'background'
     return classes[vote.argmax().item()]
 
-def assign_class(args, cluster_labels, cameras, feature_gaussians, pipe, background_color, background_feature):
+def assign_class(args: ClusteringConfig, cluster_labels, cameras, feature_gaussians, pipe, background_color, background_feature):
     cluster_to_class = {i.item(): np.zeros(len(args.classes)+1, dtype='i8') for i in np.unique(cluster_labels) if i>=0}
-    for camera in tqdm(DataLoader(cameras, batch_size=None, shuffle=False, num_workers=os.cpu_count())):
-        N,H,W = camera.original_masks.shape
+    for sample in tqdm(DataLoader(cameras, batch_size=None, shuffle=False, num_workers=os.cpu_count(), pin_memory=True, persistent_workers=os.cpu_count()>0, prefetch_factor=2 if os.cpu_count()>0 else None)):
+        camera = sample.camera
+        masks_tensor = sample.masks
+        labels_tensor = sample.labels
+        N, H, W = masks_tensor.shape
         if N==0:
             continue
-        masks = camera.original_masks.numpy()
+        masks = masks_tensor.numpy()
         background_mask = ~masks.any(axis = 0)
-        class_labels = camera.labels.numpy()
+        class_labels = labels_tensor.numpy()
         camera.to('cuda')
         render_pkg = render_with_max_contributor(camera, feature_gaussians, pipe, background_color)
         max_contributor = render_pkg['max_contributor'].detach().cpu().numpy()
@@ -226,8 +209,8 @@ def assign_class(args, cluster_labels, cameras, feature_gaussians, pipe, backgro
     cluster_to_class = {k: choose_class(args.classes, v) for k, v in cluster_to_class.items()}
     return cluster_to_class
 
-def assign_class_semantic(args, cluster_labels, cameras, feature_gaussians, pipe, background_color, background_feature):
-    lbl_feats_np = torch.load(args.features_path, weights_only=True).numpy()
+def assign_class_semantic(args: ClusteringConfig, cluster_labels, feature_gaussians):
+    lbl_feats_np = torch.load(args.segment_label_features_path, weights_only=True).numpy()
     pt_feats_np = feature_gaussians.get_semantic_features.detach().cpu().numpy() # 或者是直接用变量名
     cluster_ids_np = cluster_labels # 已经是 numpy 了
     # ==========================================
@@ -286,10 +269,9 @@ def assign_class_semantic(args, cluster_labels, cameras, feature_gaussians, pipe
     }
     return cluster_to_label_map
 
-def output_json(args, labels, classes, **kwargs):
+def output_json(args: ClusteringConfig, labels, classes, **kwargs):
     output = {}
     output['point_labels'] = labels
-    # instances = {str(cluster): {'class': klass} for cluster, klass in classes.items() if klass in args.selected_classes}
     instances = {str(cluster): {'class': klass} for cluster, klass in classes.items()}
     output['instances'] = instances
     for k, v in kwargs:
@@ -297,54 +279,63 @@ def output_json(args, labels, classes, **kwargs):
     with open(args.json_path,'w') as f:
         json.dump(output,f)
 
-def clean(args):
+def clean(
+    args: ClusteringConfig,
+):
     if not args.clean:
         return
-    if os.path.isdir(args.masks_path):
-        shutil.rmtree(args.masks_path)
-    if os.path.isdir(args.labels_path):
-        shutil.rmtree(args.labels_path)
+    if os.path.isdir(args.segment_masks_dir):
+        shutil.rmtree(args.segment_masks_dir)
+    if os.path.isdir(args.segment_labels_dir):
+        shutil.rmtree(args.segment_labels_dir)
     if os.path.isfile(args.feature_point_cloud_path):
         os.remove(args.feature_point_cloud_path)
 
-def calc_class_masks(args, dataset, feature_gaussians):
-    label_features = torch.load(os.path.join(dataset.labels_path, 'label_features.pt'), weights_only=True).numpy()
-    P, C = feature_gaussians.shape
+def build_gaussian_mask(args: ClusteringConfig, feature_gaussians):
+    opacity = feature_gaussians.get_opacity.detach().cpu().numpy().squeeze(-1)
+    scaling = feature_gaussians.get_scaling.detach().cpu().numpy().max(axis=1)
+    return (opacity >= args.opacity_threshold) & (scaling <= args.scale_threshold)
+
+
+def calc_class_masks(args: ClusteringConfig, feature_gaussians):
+    label_features = torch.load(args.segment_label_features_path, weights_only=True).numpy()
+    semantic_features = feature_gaussians.get_semantic_features.detach().cpu().numpy()
+    P, C = semantic_features.shape
     L, D = label_features.shape
     assert C == D
-    similarity = (feature_gaussians @ label_features.T)  # (P, L)
+    if L != len(args.classes):
+        raise ValueError(f"Expected {len(args.classes)} label features, got {L}")
+
+    similarity = semantic_features @ label_features.T  # (P, L)
+    valid_gaussian_mask = build_gaussian_mask(args, feature_gaussians)
+    selected_classes = set(args.selected_classes)
+
     # class_masks shape is [L, P]
     # gaussian i 属于 class j 当且仅当 similarity[i, j] 是该行的最大值且大于 threshold
     max_idx = similarity.argmax(axis=1)  # (P,)
     max_values = similarity.max(axis=1)  # (P,)
     class_masks = []
-    for class_id in range(L):
-        class_mask = (max_idx == class_id) & (max_values >= 0.25)
+    for class_id, class_name in enumerate(args.classes):
+        class_mask = (max_idx == class_id) & (max_values >= args.background_threshold) & valid_gaussian_mask
+        if class_name not in selected_classes:
+            class_mask = np.zeros(P, dtype=bool)
         class_masks.append(class_mask)
     class_masks = np.stack(class_masks, axis=0)  # (L, P)
     return class_masks
 
 @hydra.main(config_path="configs", config_name="clustering", version_base=None)
 def main(cfg: DictConfig):
-    model = cfg.model
-    dataset = cfg.dataset
-    pipe = cfg.pipe
-    args = cfg.clustering
-    
-    # Verify that the sum of ratios is approximately 1
-    total_feature_ratio = args.instance_feature_ratio + args.semantic_feature_ratio + args.xyz_feature_ratio
-    if not np.isclose(total_feature_ratio, 1.0, atol=1e-6):
-        raise ValueError(f"Feature ratios must sum to 1.0, but got {total_feature_ratio}")
-    
+    app_cfg = ClusteringAppConfig(**OmegaConf.to_container(cfg, resolve=True))
+    model: ModelConfig = app_cfg.model
+    args: ClusteringConfig = app_cfg.clustering
+
     safe_state(args.quiet)
-    feature_gaussians, background_color, background_feature = load_model(args, model)
-    cameras = load_cameras(dataset)
-    class_masks = calc_class_masks(args, dataset, feature_gaussians.get_semantic_features.cpu().numpy())
+    feature_gaussians = load_model(args, model)
+    class_masks = calc_class_masks(args, feature_gaussians)
     instance_features = feature_gaussians.get_instance_features.cpu().numpy()
     semantic_features = feature_gaussians.get_semantic_features.cpu().numpy()
-    # features = feature_gaussians.get_semantic_features.cpu().numpy()
     labels = clustering(args, instance_features, semantic_features, feature_gaussians.get_xyz.cpu().numpy(), class_masks)
-    cluster_to_class = assign_class_semantic(args, labels, cameras, feature_gaussians, pipe, background_color, background_feature)
+    cluster_to_class = assign_class_semantic(args, labels, feature_gaussians)
     output_json(args, labels.tolist(), cluster_to_class)
     clean(args)
 
