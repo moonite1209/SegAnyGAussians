@@ -1,6 +1,7 @@
 # Clustering stage parameters for LERF
 classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
 selected_classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
+output_dir: 'output/lerf_ovs/default/feature/clustering'
 segment_masks_dir: 'output/lerf_ovs/default/feature/masks'
 segment_labels_dir: 'output/lerf_ovs/default/feature/labels'
 segment_label_features_path: 'output/lerf_ovs/default/feature/labels/label_features.pt'

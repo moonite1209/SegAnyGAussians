@@ -1,6 +1,7 @@
 # Clustering stage parameters
 classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'wall', 'floor', 'ceiling', 'person', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
 selected_classes: ['chair', 'table', 'plant', 'flower', 'foliage', 'tv', 'painting', 'sofa', 'cabinet', 'bed', 'keyboard', 'door', 'window', 'lighting', 'book', 'socket', 'key', 'remote']
+output_dir: 'data/default/saga/clustering'
 segment_masks_dir: 'data/default/saga/masks'
 segment_labels_dir: 'data/default/saga/labels'
 segment_label_features_path: 'data/default/saga/labels/label_features.pt'

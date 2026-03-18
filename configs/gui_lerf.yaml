@@ -3,3 +3,9 @@ defaults:
   - pipe: default
   - gui: lerf
   - _self_
+
+hydra:
+  run:
+    dir: ${gui.output_dir}
+  job:
+    chdir: false

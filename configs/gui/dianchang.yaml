@@ -1,4 +1,5 @@
 # GUI parameters
+output_dir: 'data/dianchang/saga/gui'
 feature_point_cloud_path: 'data/dianchang/saga/feature_training/final/feature_point_cloud.ply'
 json_path: 'data/dianchang/saga/output.json'
 quiet: false

@@ -2,3 +2,9 @@ defaults:
   - dataset: lerf
   - segment: lerf
   - _self_
+
+hydra:
+  run:
+    dir: ${segment.output_dir}
+  job:
+    chdir: false

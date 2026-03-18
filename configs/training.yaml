@@ -4,3 +4,9 @@ defaults:
   - pipe: default
   - training: farsee
   - _self_
+
+hydra:
+  run:
+    dir: ${training.paths.output_dir}
+  job:
+    chdir: false

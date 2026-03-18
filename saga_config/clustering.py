@@ -8,6 +8,7 @@ from .base import StrictConfigModel, require_non_empty
 class ClusteringConfig(StrictConfigModel):
     classes: list[str]
     selected_classes: list[str]
+    output_dir: str
     segment_masks_dir: str
     segment_labels_dir: str
     segment_label_features_path: str
@@ -37,6 +38,7 @@ class ClusteringConfig(StrictConfigModel):
     def _validate_semantics(self) -> "ClusteringConfig":
         if not self.classes:
             raise ValueError("`clustering.classes` must not be empty")
+        require_non_empty(self.output_dir, "clustering.output_dir")
         require_non_empty(self.segment_masks_dir, "clustering.segment_masks_dir")
         require_non_empty(self.segment_labels_dir, "clustering.segment_labels_dir")
         require_non_empty(self.segment_label_features_path, "clustering.segment_label_features_path")

@@ -21,10 +21,20 @@ __all__ = [
 
 class TrainingPathsConfig(StrictConfigModel):
     scene_point_cloud_path: str
-    segment_masks_dir: str
-    segment_labels_dir: str
-    segment_label_features_path: str
+    artifacts_dir: str
     output_dir: str
+
+    @property
+    def segment_masks_dir(self) -> str:
+        return str(Path(self.artifacts_dir) / "masks")
+
+    @property
+    def segment_labels_dir(self) -> str:
+        return str(Path(self.artifacts_dir) / "labels")
+
+    @property
+    def segment_label_features_path(self) -> str:
+        return str(Path(self.segment_labels_dir) / "label_features.pt")
 
     @property
     def checkpoints_dir(self) -> str:
@@ -47,19 +57,13 @@ class TrainingPathsConfig(StrictConfigModel):
         return str(Path(self.output_dir) / "metrics.json")
 
     @property
-    def resolved_config_path(self) -> str:
-        return str(Path(self.output_dir) / "resolved_config.json")
-
-    @property
     def run_metadata_path(self) -> str:
         return str(Path(self.output_dir) / "run_metadata.json")
 
     @model_validator(mode="after")
     def _validate_semantics(self) -> "TrainingPathsConfig":
         require_non_empty(self.scene_point_cloud_path, "training.paths.scene_point_cloud_path")
-        require_non_empty(self.segment_masks_dir, "training.paths.segment_masks_dir")
-        require_non_empty(self.segment_labels_dir, "training.paths.segment_labels_dir")
-        require_non_empty(self.segment_label_features_path, "training.paths.segment_label_features_path")
+        require_non_empty(self.artifacts_dir, "training.paths.artifacts_dir")
         require_non_empty(self.output_dir, "training.paths.output_dir")
         return self
 
@@ -132,4 +136,3 @@ class TrainingConfig(StrictConfigModel):
     logging: TrainingLoggingConfig
     checkpoint: TrainingCheckpointConfig
     dataloader: TrainingDataloaderConfig
-

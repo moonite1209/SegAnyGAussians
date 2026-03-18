@@ -3,6 +3,7 @@ from importlib import import_module
 __all__ = [
     "FeatureTrainingArtifacts",
     "FeatureTrainer",
+    "build_feature_trainer",
     "run_feature_training",
 ]
 

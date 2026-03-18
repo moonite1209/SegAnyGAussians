@@ -4,3 +4,9 @@ defaults:
   - pipe: default
   - training: lerf
   - _self_
+
+hydra:
+  run:
+    dir: ${training.paths.output_dir}
+  job:
+    chdir: false

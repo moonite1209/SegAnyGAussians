@@ -6,6 +6,7 @@ from .base import StrictConfigModel, require_non_empty
 
 
 class GuiConfig(StrictConfigModel):
+    output_dir: str
     feature_point_cloud_path: str
     json_path: str
     quiet: bool = False
@@ -14,6 +15,7 @@ class GuiConfig(StrictConfigModel):
 
     @model_validator(mode="after")
     def _validate_semantics(self) -> "GuiConfig":
+        require_non_empty(self.output_dir, "gui.output_dir")
         require_non_empty(self.feature_point_cloud_path, "gui.feature_point_cloud_path")
         require_non_empty(self.json_path, "gui.json_path")
         return self

@@ -9,6 +9,7 @@ from .light_camera import LightCamera
 
 __all__ = [
     "RenderFrameSample",
+    "MaskFrameSample",
     "FeatureFrameSample",
     "move_sample_to_device",
 ]
@@ -30,6 +31,16 @@ class RenderFrameSample:
 
 
 @dataclass
+class MaskFrameSample(RenderFrameSample):
+    masks: torch.Tensor
+
+    def to(self, device: str, non_blocking: bool = True) -> "MaskFrameSample":
+        super().to(device, non_blocking=non_blocking)
+        self.masks = self.masks.to(device, non_blocking=non_blocking)
+        return self
+
+
+@dataclass
 class FeatureFrameSample(RenderFrameSample):
     masks: torch.Tensor
     labels: torch.Tensor
@@ -43,7 +54,7 @@ class FeatureFrameSample(RenderFrameSample):
         return self
 
 
-SampleT = Union[RenderFrameSample, FeatureFrameSample]
+SampleT = Union[RenderFrameSample, MaskFrameSample, FeatureFrameSample]
 
 
 def move_sample_to_device(sample: SampleT, device: str, non_blocking: bool = True) -> SampleT:

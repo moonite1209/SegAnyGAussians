@@ -14,6 +14,7 @@ ovsegmenter:
     _target_: segment.SAMSegmenter
     model_id: "facebook/sam-vit-base"
     device: "cuda"
+output_dir: 'output/lerf_ovs/default/feature/segment'
 masks_dir: 'output/lerf_ovs/default/feature/masks'
 labels_dir: 'output/lerf_ovs/default/feature/labels'
 label_features_path: 'output/lerf_ovs/default/feature/labels/label_features.pt'

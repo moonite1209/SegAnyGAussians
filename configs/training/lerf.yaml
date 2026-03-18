@@ -1,9 +1,7 @@
 # Feature training stage parameters
 paths:
   scene_point_cloud_path: 'output/lerf_ovs/default/scene/point_cloud.ply'
-  segment_masks_dir: 'output/lerf_ovs/default/feature/masks'
-  segment_labels_dir: 'output/lerf_ovs/default/feature/labels'
-  segment_label_features_path: 'output/lerf_ovs/default/feature/labels/label_features.pt'
+  artifacts_dir: 'output/lerf_ovs/default/feature'
   output_dir: 'output/lerf_ovs/default/feature_training'
 
 optimizer:

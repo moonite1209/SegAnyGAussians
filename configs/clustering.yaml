@@ -2,3 +2,9 @@ defaults:
   - model: farsee
   - clustering: farsee
   - _self_
+
+hydra:
+  run:
+    dir: ${clustering.output_dir}
+  job:
+    chdir: false

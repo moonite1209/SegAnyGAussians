@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import os
 import time
@@ -12,7 +11,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from gaussian_renderer import render, render_contrastive_feature, render_semantic_feature, render_with_depth
-from saga_data import FeatureDataset, build_scene_index, move_sample_to_device
+from saga_data import FeatureDataset, build_feature_manifest, move_sample_to_device
 from scene import FeatureGaussianModel
 from utils.image_utils import psnr
 from utils.loss_utils import l1_loss
@@ -59,111 +58,35 @@ class StepMetrics:
 class FeatureTrainer:
     def __init__(
         self,
-        model_cfg,
-        dataset_cfg,
-        pipe_cfg,
-        training_cfg,
         *,
-        resolved_config: dict[str, Any],
+        model: FeatureGaussianModel,
+        train_dataloader_factory: Callable[[], DataLoader],
+        val_dataloader_factory: Callable[[], DataLoader],
+        reporter: FeatureReporter,
+        checkpoints: FeatureCheckpointManager,
+        training_cfg: Any,
+        device: torch.device,
+        pipe_cfg: Any,
+        background_rgb: torch.Tensor,
+        background_instance: torch.Tensor,
+        background_semantic: torch.Tensor,
         dependencies: FeatureTrainerDependencies | None = None,
     ):
-        self.model_cfg = model_cfg
-        self.dataset_cfg = dataset_cfg
-        self.pipe_cfg = pipe_cfg
+        self.model = model
+        self.train_dataloader_factory = train_dataloader_factory
+        self.val_dataloader_factory = val_dataloader_factory
+        self.reporter = reporter
+        self.checkpoints = checkpoints
         self.training_cfg = training_cfg
-        self.resolved_config = resolved_config
+        self.device = device
+        self.pipe_cfg = pipe_cfg
+        self.background_rgb = background_rgb
+        self.background_instance = background_instance
+        self.background_semantic = background_semantic
         self.dependencies = dependencies or FeatureTrainerDependencies()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        os.makedirs(self.training_cfg.paths.output_dir, exist_ok=True)
-        os.makedirs(self.training_cfg.paths.checkpoints_dir, exist_ok=True)
-        os.makedirs(self.training_cfg.paths.final_dir, exist_ok=True)
-
-        self._write_resolved_config()
-
-        self.model = FeatureGaussianModel(
-            self.model_cfg.sh_degree,
-            self.model_cfg.instance_feature_dim,
-            self.model_cfg.semantic_feature_dim,
-        )
-        self.model.bootstrap_from_scene_ply(self.training_cfg.paths.scene_point_cloud_path, device=self.device)
-        self.model.training_setup_feature_only(self.training_cfg)
-
-        self.background_rgb = torch.tensor(
-            [1.0, 1.0, 1.0] if self.model_cfg.white_background else [0.0, 0.0, 0.0],
-            dtype=torch.float32,
-            device=self.device,
-        )
-        feature_background_value = 1.0 if self.model_cfg.white_background else 0.0
-        self.background_instance = torch.full(
-            (self.model_cfg.instance_feature_dim,),
-            fill_value=feature_background_value,
-            dtype=torch.float32,
-            device=self.device,
-        )
-        self.background_semantic = torch.full(
-            (self.model_cfg.semantic_feature_dim,),
-            fill_value=feature_background_value,
-            dtype=torch.float32,
-            device=self.device,
-        )
-
-        scene_index = build_scene_index(self.dataset_cfg)
-        train_ids, val_ids = self._resolve_split_ids(scene_index)
-        self.train_dataset = FeatureDataset(
-            scene_index,
-            segment_masks_dir=self.training_cfg.paths.segment_masks_dir,
-            segment_labels_dir=self.training_cfg.paths.segment_labels_dir,
-            segment_label_features_path=self.training_cfg.paths.segment_label_features_path,
-            indices=train_ids,
-            resolution=self.dataset_cfg.resolution,
-        )
-        self.val_dataset = FeatureDataset(
-            scene_index,
-            segment_masks_dir=self.training_cfg.paths.segment_masks_dir,
-            segment_labels_dir=self.training_cfg.paths.segment_labels_dir,
-            segment_label_features_path=self.training_cfg.paths.segment_label_features_path,
-            indices=val_ids,
-            resolution=self.dataset_cfg.resolution,
-        )
-
-        self.reporter = FeatureReporter(self.training_cfg.paths, self.training_cfg.logging)
-        self.checkpoints = FeatureCheckpointManager(
-            self.training_cfg.paths,
-            self.training_cfg.checkpoint,
-            resolved_config=self.resolved_config,
-        )
         self.global_step = 0
         self.start_epoch = 1
         self.best_validation_loss = math.inf
-
-    def _write_resolved_config(self) -> None:
-        with open(self.training_cfg.paths.resolved_config_path, "w", encoding="utf-8") as handle:
-            json.dump(self.resolved_config, handle, indent=2)
-
-    def _resolve_split_ids(self, scene_index):
-        train_ids = list(scene_index.train_ids)
-        if scene_index.test_ids:
-            return train_ids, list(scene_index.test_ids)
-
-        holdout = min(self.training_cfg.validation.fallback_holdout_views, max(1, len(train_ids)))
-        val_ids = train_ids[:holdout]
-        remaining_train = train_ids[holdout:]
-        if remaining_train:
-            return remaining_train, val_ids
-        return train_ids, val_ids
-
-    def _build_dataloader(self, dataset, *, shuffle: bool):
-        kwargs = {
-            "batch_size": None,
-            "shuffle": shuffle,
-            "num_workers": self.training_cfg.dataloader.num_workers,
-            "pin_memory": self.training_cfg.dataloader.pin_memory,
-        }
-        if self.training_cfg.dataloader.num_workers > 0:
-            kwargs["persistent_workers"] = self.training_cfg.dataloader.persistent_workers
-            kwargs["prefetch_factor"] = self.training_cfg.dataloader.prefetch_factor
-        return DataLoader(dataset, **kwargs)
 
     def _measure_step(self, fn: Callable[[], StepMetrics]) -> StepMetrics:
         if self.device.type == "cuda":
@@ -272,7 +195,7 @@ class FeatureTrainer:
         }
 
     def _run_train_epoch(self, epoch: int) -> dict[str, float]:
-        dataloader = self._build_dataloader(self.train_dataset, shuffle=True)
+        dataloader = self.train_dataloader_factory()
         progress = tqdm(
             dataloader,
             desc=f"Train {epoch}/{self.training_cfg.loop.epochs}",
@@ -303,7 +226,7 @@ class FeatureTrainer:
         return self._aggregate_metrics(rows)
 
     def _run_validation(self, epoch: int) -> dict[str, float]:
-        dataloader = self._build_dataloader(self.val_dataset, shuffle=False)
+        dataloader = self.val_dataloader_factory()
         rows: list[dict[str, float]] = []
         visualizations: list[ValidationVisualization] = []
 
@@ -451,13 +374,120 @@ class FeatureTrainer:
 
 
 def run_feature_training(app_cfg, dependencies: FeatureTrainerDependencies | None = None) -> FeatureTrainingArtifacts:
-    resolved_config = app_cfg.dump_model(exclude_none=True) if hasattr(app_cfg, "dump_model") else app_cfg
-    trainer = FeatureTrainer(
-        app_cfg.model,
+    trainer = build_feature_trainer(app_cfg, dependencies=dependencies)
+    return trainer.run()
+
+
+def _resolve_split_ids(manifest, validation_cfg):
+    train_ids = list(manifest.train_ids)
+    if manifest.test_ids:
+        return train_ids, list(manifest.test_ids)
+
+    holdout = min(validation_cfg.fallback_holdout_views, max(1, len(train_ids)))
+    val_ids = train_ids[:holdout]
+    remaining_train = train_ids[holdout:]
+    if remaining_train:
+        return remaining_train, val_ids
+    return train_ids, val_ids
+
+
+def _make_dataloader_factory(dataset, dataloader_cfg, *, shuffle: bool) -> Callable[[], DataLoader]:
+    def _factory() -> DataLoader:
+        kwargs = {
+            "batch_size": None,
+            "shuffle": shuffle,
+            "num_workers": dataloader_cfg.num_workers,
+            "pin_memory": dataloader_cfg.pin_memory,
+        }
+        if dataloader_cfg.num_workers > 0:
+            kwargs["persistent_workers"] = dataloader_cfg.persistent_workers
+            kwargs["prefetch_factor"] = dataloader_cfg.prefetch_factor
+        return DataLoader(dataset, **kwargs)
+
+    return _factory
+
+
+def build_feature_trainer(
+    app_cfg,
+    *,
+    device: torch.device | None = None,
+    dependencies: FeatureTrainerDependencies | None = None,
+) -> FeatureTrainer:
+    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    os.makedirs(app_cfg.training.paths.output_dir, exist_ok=True)
+    os.makedirs(app_cfg.training.paths.checkpoints_dir, exist_ok=True)
+    os.makedirs(app_cfg.training.paths.final_dir, exist_ok=True)
+
+    model = FeatureGaussianModel(
+        app_cfg.model.sh_degree,
+        app_cfg.model.instance_feature_dim,
+        app_cfg.model.semantic_feature_dim,
+    )
+    model.bootstrap_from_scene_ply(app_cfg.training.paths.scene_point_cloud_path, device=device)
+    model.training_setup_feature_only(app_cfg.training)
+
+    feature_background_value = 1.0 if app_cfg.model.white_background else 0.0
+    background_rgb = torch.tensor(
+        [1.0, 1.0, 1.0] if app_cfg.model.white_background else [0.0, 0.0, 0.0],
+        dtype=torch.float32,
+        device=device,
+    )
+    background_instance = torch.full(
+        (app_cfg.model.instance_feature_dim,),
+        fill_value=feature_background_value,
+        dtype=torch.float32,
+        device=device,
+    )
+    background_semantic = torch.full(
+        (app_cfg.model.semantic_feature_dim,),
+        fill_value=feature_background_value,
+        dtype=torch.float32,
+        device=device,
+    )
+
+    manifest = build_feature_manifest(
         app_cfg.dataset,
-        app_cfg.pipe,
-        app_cfg.training,
-        resolved_config=resolved_config,
+        artifacts_dir=app_cfg.training.paths.artifacts_dir,
+    )
+    label_features_shape = manifest.require_global_asset("label_features").native_shape
+    if (
+        label_features_shape is not None
+        and len(label_features_shape) == 2
+        and label_features_shape[1] != app_cfg.model.semantic_feature_dim
+    ):
+        raise ValueError(
+            "Label feature dimension does not match `model.semantic_feature_dim`: "
+            f"{label_features_shape[1]} vs {app_cfg.model.semantic_feature_dim}"
+        )
+    train_ids, val_ids = _resolve_split_ids(manifest, app_cfg.training.validation)
+    train_dataset = FeatureDataset(
+        manifest,
+        indices=train_ids,
+        resolution=app_cfg.dataset.resolution,
+    )
+    val_dataset = FeatureDataset(
+        manifest,
+        indices=val_ids,
+        resolution=app_cfg.dataset.resolution,
+    )
+
+    reporter = FeatureReporter(app_cfg.training.paths, app_cfg.training.logging)
+    checkpoints = FeatureCheckpointManager(
+        app_cfg.training.paths,
+        app_cfg.training.checkpoint,
+    )
+    return FeatureTrainer(
+        model=model,
+        train_dataloader_factory=_make_dataloader_factory(train_dataset, app_cfg.training.dataloader, shuffle=True),
+        val_dataloader_factory=_make_dataloader_factory(val_dataset, app_cfg.training.dataloader, shuffle=False),
+        reporter=reporter,
+        checkpoints=checkpoints,
+        training_cfg=app_cfg.training,
+        device=device,
+        pipe_cfg=app_cfg.pipe,
+        background_rgb=background_rgb,
+        background_instance=background_instance,
+        background_semantic=background_semantic,
         dependencies=dependencies,
     )
-    return trainer.run()

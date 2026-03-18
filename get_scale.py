@@ -1,15 +1,13 @@
 import torch
 from argparse import ArgumentParser, Namespace
-from pathlib import Path
 
 from arguments import ModelParams, PipelineParams
 from scene import GaussianModel
-from saga_data import RenderDataset, build_scene_index, depth_to_camera_points, move_sample_to_device
+from saga_data import MaskDataset, build_mask_manifest, depth_to_camera_points, move_sample_to_device
 
 import gaussian_renderer
 import os
 from torch.utils.data import DataLoader
-from saga_data.datastore import LocalDataStore
 FEATURE_DIM = 32
 
 DATA_ROOT = './data/nerf_llff_data_for_3dgs/'
@@ -76,7 +74,12 @@ if __name__ == '__main__':
 
     dataset = model.extract(args)
     pipe = pipeline.extract(args)
-    scene_index = build_scene_index(dataset)
+    artifacts_dir = getattr(dataset, "artifacts_dir", getattr(dataset, "segment_artifacts_path", None))
+    scene_index = build_mask_manifest(
+        dataset,
+        artifacts_dir=artifacts_dir,
+        masks_dir=getattr(dataset, "masks_path", None),
+    )
 
     # ALLOW_PRINCIPLE_POINT_SHIFT = 'lerf' in args.model_path
     dataset.allow_principle_point_shift = ALLOW_PRINCIPLE_POINT_SHIFT
@@ -84,17 +87,14 @@ if __name__ == '__main__':
     scene_gaussians = GaussianModel(dataset.sh_degree)
     scene_gaussians.load_ply(dataset.point_cloud_path)
 
-    assert os.path.exists(dataset.masks_path) and "Please specify a valid masks root."
-
     OUTPUT_DIR = dataset.mask_scales_path
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    render_dataset = RenderDataset(
+    render_dataset = MaskDataset(
         scene_index,
         indices=list(range(len(scene_index.specs))),
         resolution=getattr(dataset, "resolution", 1),
     )
     dataloader = DataLoader(render_dataset, batch_size=None, shuffle=False, num_workers=0, pin_memory=True)
-    datastore = LocalDataStore()
     background = torch.tensor([1, 1, 1] if dataset.white_background else [0, 0, 0], dtype=torch.float32, device='cuda')
     erode_kernel = torch.full((1, 1, 3, 3), 1.0)
 
@@ -104,14 +104,11 @@ if __name__ == '__main__':
             f.write(str((it+1)*100//len(render_dataset)))
         move_sample_to_device(sample, "cuda")
         view = sample.camera
-        mask_path = Path(dataset.masks_path) / f"{sample.image_name}.pt"
-        if not mask_path.exists():
-            continue
         rendered_pkg = gaussian_renderer.render_with_depth(view, scene_gaussians, pipe, background)
 
         depth = rendered_pkg['depth'] # pixel-wise
 
-        corresponding_masks = datastore.load_masks(mask_path, (view.image_width, view.image_height)).cpu()
+        corresponding_masks = sample.masks.cpu()
         if corresponding_masks.numel() == 0:
             continue
 

@@ -47,6 +47,7 @@ class OVDetectSegmenterConfig(StrictConfigModel):
 class SegmentConfig(StrictConfigModel):
     classes: list[str]
     ovsegmenter: OVDetectSegmenterConfig
+    output_dir: str
     masks_dir: str
     labels_dir: str
     label_features_path: str
@@ -58,6 +59,7 @@ class SegmentConfig(StrictConfigModel):
             raise ValueError("`segment.classes` must not be empty")
         if len(set(self.classes)) != len(self.classes):
             raise ValueError("`segment.classes` must not contain duplicate entries")
+        require_non_empty(self.output_dir, "segment.output_dir")
         require_non_empty(self.masks_dir, "segment.masks_dir")
         require_non_empty(self.labels_dir, "segment.labels_dir")
         require_non_empty(self.label_features_path, "segment.label_features_path")

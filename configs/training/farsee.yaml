@@ -1,9 +1,7 @@
 # Feature training stage parameters
 paths:
   scene_point_cloud_path: '${dataset.base_path}/output_models/point_cloud/iteration_30000/point_cloud.ply'
-  segment_masks_dir: '${dataset.base_path}/saga/masks'
-  segment_labels_dir: '${dataset.base_path}/saga/labels'
-  segment_label_features_path: '${dataset.base_path}/saga/labels/label_features.pt'
+  artifacts_dir: '${dataset.base_path}/saga'
   output_dir: '${dataset.base_path}/saga/feature_training'
 
 optimizer:

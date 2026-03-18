@@ -15,10 +15,9 @@ class LoadedCheckpointState:
 
 
 class FeatureCheckpointManager:
-    def __init__(self, paths_cfg, checkpoint_cfg, resolved_config: dict[str, Any]):
+    def __init__(self, paths_cfg, checkpoint_cfg):
         self.paths_cfg = paths_cfg
         self.checkpoint_cfg = checkpoint_cfg
-        self.resolved_config = resolved_config
         os.makedirs(self.paths_cfg.checkpoints_dir, exist_ok=True)
 
     @property
@@ -42,7 +41,6 @@ class FeatureCheckpointManager:
             "best_metric": best_metric,
             "model_state": model.capture(),
             "optimizer_state": optimizer_state,
-            "config": self.resolved_config,
         }
 
     def save(

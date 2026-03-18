@@ -1,20 +1,23 @@
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
+
 import numpy as np
 
 from scene.colmap_loader import (
-    read_extrinsics_text,
-    read_intrinsics_text,
+    qvec2rotmat,
     read_extrinsics_binary,
+    read_extrinsics_text,
     read_intrinsics_binary,
+    read_intrinsics_text,
     read_points3D_binary,
     read_points3D_text,
-    qvec2rotmat,
 )
-from scene.dataset_readers import fetchPly, storePly
+from scene.dataset_readers import storePly
 
-from ..specs import CameraParams, CameraDataIndex, CameraSpec
-from ..scene_index import SceneIndex, split_train_test, compute_nerfpp_normalization
+from ..scene_index import AssetRef, FrameRecord, SceneManifest, compute_nerfpp_normalization, split_train_test
+from ..specs import CameraParams
 
 
 class ColmapReader:
@@ -36,28 +39,24 @@ class ColmapReader:
         txt_path = self.sparse_path / "images.txt"
         if bin_path.exists():
             return read_extrinsics_binary(str(bin_path))
-        elif txt_path.exists():
+        if txt_path.exists():
             return read_extrinsics_text(str(txt_path))
-        else:
-            raise FileNotFoundError(f"COLMAP images file not found: {bin_path} or {txt_path}")
+        raise FileNotFoundError(f"COLMAP images file not found: {bin_path} or {txt_path}")
 
     def _read_intrinsics(self):
         bin_path = self.sparse_path / "cameras.bin"
         txt_path = self.sparse_path / "cameras.txt"
         if bin_path.exists():
             return read_intrinsics_binary(str(bin_path))
-        elif txt_path.exists():
+        if txt_path.exists():
             return read_intrinsics_text(str(txt_path))
-        else:
-            raise FileNotFoundError(f"COLMAP cameras file not found: {bin_path} or {txt_path}")
+        raise FileNotFoundError(f"COLMAP cameras file not found: {bin_path} or {txt_path}")
 
-    def _create_camera_spec(self, extr, intr, idx: int) -> CameraSpec:
-        uid = intr.id
-        height = intr.height
-        width = intr.width
-
-        R = np.transpose(qvec2rotmat(extr.qvec))
-        T = np.array(extr.tvec)
+    def _create_frame_record(self, extr, intr) -> FrameRecord:
+        height = int(intr.height)
+        width = int(intr.width)
+        r_matrix = np.transpose(qvec2rotmat(extr.qvec))
+        t_vector = np.array(extr.tvec)
 
         if intr.model == "SIMPLE_PINHOLE":
             fx = intr.params[0]
@@ -77,46 +76,58 @@ class ColmapReader:
         else:
             raise ValueError(f"Unsupported COLMAP camera model: {intr.model}")
 
+        image_name = Path(extr.name).stem
+        image_path = self.images_path / extr.name
         params = CameraParams(
-            uid=uid,
+            uid=int(intr.id),
             width=width,
             height=height,
-            fx=fx,
-            fy=fy,
-            cx=cx,
-            cy=cy,
-            R=R,
-            T=T,
+            fx=float(fx),
+            fy=float(fy),
+            cx=float(cx),
+            cy=float(cy),
+            R=r_matrix,
+            T=t_vector,
         )
 
-        image_name_noext = Path(extr.name).stem
-        image_path = self.images_path / extr.name
-
-        if self.depth_path:
-            image_idx = image_name_noext.split("-")[-1]
+        assets: dict[str, AssetRef] = {
+            "image": AssetRef(
+                kind="image",
+                path=image_path,
+                native_shape=(height, width),
+                dtype="uint8",
+                codec=image_path.suffix,
+            )
+        }
+        if self.depth_path is not None:
+            image_idx = image_name.split("-")[-1]
             depth_path = self.depth_path / f"{image_idx}_smoothDepth.dmb"
             confidence_path = self.depth_path / f"{image_idx}_confidence.dmb"
-        else:
-            depth_path = None
-            confidence_path = None
+            assets["depth"] = AssetRef(kind="depth", path=depth_path, dtype="float32", codec=depth_path.suffix)
+            assets["confidence"] = AssetRef(
+                kind="confidence",
+                path=confidence_path,
+                dtype="uint8",
+                codec=confidence_path.suffix,
+            )
 
-        data_index = CameraDataIndex(
-            image_path=image_path,
-            depth_path=depth_path,
-            confidence_path=confidence_path,
+        return FrameRecord(
+            frame_id=image_name,
+            image_name=image_name,
+            params=params,
+            assets=assets,
         )
-        return CameraSpec(params=params, data_index=data_index, image_name=image_name_noext)
 
-    def read_scene_index(self, eval: bool = False, llffhold: int = 8) -> SceneIndex:
-        specs: List[CameraSpec] = []
+    def read_scene_manifest(self, eval: bool = False, llffhold: int = 8) -> SceneManifest:
+        frames: list[FrameRecord] = []
         for key in self.cam_extrinsics:
             extr = self.cam_extrinsics[key]
             intr = self.cam_intrinsics[extr.camera_id]
-            specs.append(self._create_camera_spec(extr, intr, len(specs)))
+            frames.append(self._create_frame_record(extr, intr))
 
-        specs.sort(key=lambda s: s.image_name)
-        train_ids, test_ids = split_train_test(specs, eval=eval, llffhold=llffhold)
-        scene_transform = compute_nerfpp_normalization([specs[i] for i in train_ids] if train_ids else specs)
+        frames.sort(key=lambda frame: frame.image_name)
+        train_ids, test_ids = split_train_test(frames, eval=eval, llffhold=llffhold)
+        scene_transform = compute_nerfpp_normalization([frames[i] for i in train_ids] if train_ids else frames)
 
         ply_path = self.sparse_path / "points3D.ply"
         bin_path = self.sparse_path / "points3D.bin"
@@ -130,10 +141,13 @@ class ColmapReader:
                 raise FileNotFoundError(f"COLMAP points3D file not found: {bin_path} or {txt_path}")
             storePly(str(ply_path), xyz, rgb)
 
-        return SceneIndex(
-            specs=specs,
+        return SceneManifest(
+            frames=tuple(frames),
             train_ids=train_ids,
             test_ids=test_ids,
             ply_path=ply_path,
             scene_transform=scene_transform,
         )
+
+    def read_scene_index(self, eval: bool = False, llffhold: int = 8) -> SceneManifest:
+        return self.read_scene_manifest(eval=eval, llffhold=llffhold)

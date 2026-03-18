@@ -1,4 +1,5 @@
 # GUI parameters
+output_dir: 'data/default/saga/gui'
 feature_point_cloud_path: 'data/default/saga/feature_training/final/feature_point_cloud.ply'
 json_path: 'data/default/saga/output.json'
 quiet: false

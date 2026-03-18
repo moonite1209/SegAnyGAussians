@@ -1,4 +1,5 @@
 # GUI parameters for LERF
+output_dir: 'output/lerf_ovs/default/feature/gui'
 feature_point_cloud_path: 'output/lerf_ovs/default/feature_training/final/feature_point_cloud.ply'
 json_path: 'output/lerf_ovs/default/feature/output.json'
 quiet: false

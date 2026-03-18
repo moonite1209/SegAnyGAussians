@@ -2,3 +2,9 @@ defaults:
   - model: lerf
   - clustering: lerf
   - _self_
+
+hydra:
+  run:
+    dir: ${clustering.output_dir}
+  job:
+    chdir: false

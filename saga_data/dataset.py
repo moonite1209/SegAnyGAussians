@@ -1,133 +1,190 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Iterable, Optional, Sequence
 
 from torch.utils.data import Dataset
 
-from .datastore import LocalDataStore
-from .light_camera import LightCamera
-from .resolution import compute_target_size
-from .sample import FeatureFrameSample, RenderFrameSample
-from .scene_index import SceneIndex
-from .specs import CameraSpec, CameraParams
+from .datastore import LocalDataStoreV2
+from .pipeline import FrameTransformPipeline, PreparedFrame
+from .sample import FeatureFrameSample, MaskFrameSample, RenderFrameSample
+from .scene_index import FrameRecord, SceneManifest
+
+
+SampleBuilder = Callable[[PreparedFrame], object]
+
+
+def _identity_sample(prepared: PreparedFrame):
+    return prepared
 
 
 @dataclass(frozen=True)
-class _FrameRecord:
-    spec: CameraSpec
-    target_size: tuple[int, int]
-    scaled_params: CameraParams
+class _DatasetFrame:
+    index: int
+    record: FrameRecord
 
 
-class _BaseSceneDataset(Dataset):
+class ManifestDataset(Dataset):
     def __init__(
         self,
-        scene_index: SceneIndex,
+        manifest: SceneManifest,
+        *,
         indices: Optional[Sequence[int]] = None,
+        split: str | None = None,
         resolution: int = 1,
         resolution_scale: float = 1.0,
+        required_assets: Iterable[str] = ("image",),
+        required_global_assets: Iterable[str] = (),
+        sample_builder: SampleBuilder | None = None,
+        datastore: LocalDataStoreV2 | None = None,
+        transform_pipeline: FrameTransformPipeline | None = None,
     ):
-        self.scene_index = scene_index
-        selected_indices = list(indices) if indices is not None else list(range(len(scene_index.specs)))
-        self._records: list[_FrameRecord] = []
-        for idx in selected_indices:
-            spec = scene_index.specs[idx]
-            target_w, target_h = compute_target_size(
-                spec.params.width,
-                spec.params.height,
-                resolution,
-                resolution_scale,
-            )
-            self._records.append(
-                _FrameRecord(
-                    spec=spec,
-                    target_size=(target_w, target_h),
-                    scaled_params=spec.params.scaled_to(target_w, target_h),
-                )
-            )
-        self.datastore = LocalDataStore()
+        if indices is not None and split is not None:
+            raise ValueError("Pass either `indices` or `split`, not both")
+        self.manifest = manifest
+        self.resolution = resolution
+        self.resolution_scale = resolution_scale
+        self.required_assets = tuple(required_assets)
+        self.required_global_assets = tuple(required_global_assets)
+        self.sample_builder = sample_builder or _identity_sample
+        self.datastore = datastore or LocalDataStoreV2()
+        self.transform_pipeline = transform_pipeline or FrameTransformPipeline(self.datastore)
+
+        if split is not None:
+            if split == "train":
+                selected_indices = list(manifest.train_ids)
+            elif split == "test":
+                selected_indices = list(manifest.test_ids)
+            else:
+                raise ValueError(f"Unsupported split `{split}`")
+        else:
+            selected_indices = list(indices) if indices is not None else list(range(len(manifest.frames)))
+
+        self._frames = [
+            _DatasetFrame(index=index, record=manifest.frames[index])
+            for index in selected_indices
+        ]
 
     def __len__(self) -> int:
-        return len(self._records)
+        return len(self._frames)
 
-    def _build_camera(self, params: CameraParams) -> LightCamera:
-        return LightCamera.from_params(params, scene_transform=self.scene_index.scene_transform)
-
-    def _load_render_sample(self, record: _FrameRecord) -> RenderFrameSample:
-        image, alpha = self.datastore.load_image(record.spec.data_index.image_path, record.target_size)
-        return RenderFrameSample(
-            image=image,
-            alpha=alpha,
-            camera=self._build_camera(record.scaled_params),
-            image_name=record.spec.image_name,
+    def __getitem__(self, idx: int):
+        frame = self._frames[idx]
+        prepared = self.transform_pipeline.prepare(
+            self.manifest,
+            frame.record,
+            resolution=self.resolution,
+            resolution_scale=self.resolution_scale,
+            required_assets=self.required_assets,
+            required_global_assets=self.required_global_assets,
         )
+        return self.sample_builder(prepared)
 
 
-class RenderDataset(_BaseSceneDataset):
-    def __getitem__(self, idx: int) -> RenderFrameSample:
-        return self._load_render_sample(self._records[idx])
+def build_render_sample(prepared: PreparedFrame) -> RenderFrameSample:
+    return RenderFrameSample(
+        image=prepared.image,
+        alpha=prepared.alpha,
+        camera=prepared.camera,
+        image_name=prepared.record.image_name,
+    )
 
 
-class FeatureDataset(_BaseSceneDataset):
+def build_mask_sample(prepared: PreparedFrame) -> MaskFrameSample:
+    return MaskFrameSample(
+        image=prepared.image,
+        alpha=prepared.alpha,
+        camera=prepared.camera,
+        image_name=prepared.record.image_name,
+        masks=prepared.require_asset("masks"),
+    )
+
+
+def build_feature_sample(prepared: PreparedFrame) -> FeatureFrameSample:
+    return FeatureFrameSample(
+        image=prepared.image,
+        alpha=prepared.alpha,
+        camera=prepared.camera,
+        image_name=prepared.record.image_name,
+        masks=prepared.require_asset("masks"),
+        labels=prepared.require_asset("labels"),
+        label_features=prepared.require_global_asset("label_features"),
+    )
+
+
+class RenderDataset(ManifestDataset):
     def __init__(
         self,
-        scene_index: SceneIndex,
-        segment_masks_dir: str,
-        segment_labels_dir: str,
-        segment_label_features_path: str,
+        manifest: SceneManifest,
         indices: Optional[Sequence[int]] = None,
+        *,
+        split: str | None = None,
         resolution: int = 1,
         resolution_scale: float = 1.0,
+        datastore: LocalDataStoreV2 | None = None,
+        transform_pipeline: FrameTransformPipeline | None = None,
     ):
-        self.segment_masks_dir = Path(segment_masks_dir)
-        self.segment_labels_dir = Path(segment_labels_dir)
-        self.segment_label_features_path = Path(segment_label_features_path)
         super().__init__(
-            scene_index=scene_index,
+            manifest,
             indices=indices,
+            split=split,
             resolution=resolution,
             resolution_scale=resolution_scale,
+            required_assets=("image",),
+            sample_builder=build_render_sample,
+            datastore=datastore,
+            transform_pipeline=transform_pipeline,
         )
-        self._mask_paths: list[Path] = []
-        self._label_paths: list[Path] = []
-        self._validate_and_resolve_feature_paths()
 
-    def _validate_and_resolve_feature_paths(self) -> None:
-        if not self.segment_masks_dir.is_dir():
-            raise FileNotFoundError(f"Segment masks directory not found: {self.segment_masks_dir}")
-        if not self.segment_labels_dir.is_dir():
-            raise FileNotFoundError(f"Segment labels directory not found: {self.segment_labels_dir}")
-        if not self.segment_label_features_path.is_file():
-            raise FileNotFoundError(f"Segment label features not found: {self.segment_label_features_path}")
 
-        for record in self._records:
-            mask_path = self.segment_masks_dir / f"{record.spec.image_name}.pt"
-            label_path = self.segment_labels_dir / f"{record.spec.image_name}.pt"
-            if not mask_path.is_file():
-                raise FileNotFoundError(f"Mask file not found for {record.spec.image_name}: {mask_path}")
-            if not label_path.is_file():
-                raise FileNotFoundError(f"Label file not found for {record.spec.image_name}: {label_path}")
-            self._mask_paths.append(mask_path)
-            self._label_paths.append(label_path)
-
-    def __getitem__(self, idx: int) -> FeatureFrameSample:
-        record = self._records[idx]
-        render_sample = self._load_render_sample(record)
-        masks = self.datastore.load_masks(self._mask_paths[idx], record.target_size)
-        labels, label_features = self.datastore.load_labels(
-            self._label_paths[idx],
-            self.segment_label_features_path,
+class FeatureDataset(ManifestDataset):
+    def __init__(
+        self,
+        manifest: SceneManifest,
+        indices: Optional[Sequence[int]] = None,
+        *,
+        split: str | None = None,
+        resolution: int = 1,
+        resolution_scale: float = 1.0,
+        datastore: LocalDataStoreV2 | None = None,
+        transform_pipeline: FrameTransformPipeline | None = None,
+    ):
+        super().__init__(
+            manifest,
+            indices=indices,
+            split=split,
+            resolution=resolution,
+            resolution_scale=resolution_scale,
+            required_assets=("image", "masks", "labels"),
+            required_global_assets=("label_features",),
+            sample_builder=build_feature_sample,
+            datastore=datastore,
+            transform_pipeline=transform_pipeline,
         )
-        return FeatureFrameSample(
-            image=render_sample.image,
-            alpha=render_sample.alpha,
-            camera=render_sample.camera,
-            image_name=render_sample.image_name,
-            masks=masks,
-            labels=labels,
-            label_features=label_features,
+
+
+class MaskDataset(ManifestDataset):
+    def __init__(
+        self,
+        manifest: SceneManifest,
+        indices: Optional[Sequence[int]] = None,
+        *,
+        split: str | None = None,
+        resolution: int = 1,
+        resolution_scale: float = 1.0,
+        datastore: LocalDataStoreV2 | None = None,
+        transform_pipeline: FrameTransformPipeline | None = None,
+    ):
+        super().__init__(
+            manifest,
+            indices=indices,
+            split=split,
+            resolution=resolution,
+            resolution_scale=resolution_scale,
+            required_assets=("image", "masks"),
+            sample_builder=build_mask_sample,
+            datastore=datastore,
+            transform_pipeline=transform_pipeline,
         )
 
 

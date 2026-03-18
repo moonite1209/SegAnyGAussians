@@ -14,6 +14,7 @@ ovsegmenter:
     _target_: segment.SAMSegmenter
     model_id: "facebook/sam-vit-base"
     device: "cuda"
+output_dir: '${dataset.base_path}/saga/segment'
 masks_dir: '${dataset.base_path}/saga/masks'
 labels_dir: '${dataset.base_path}/saga/labels'
 label_features_path: '${dataset.base_path}/saga/labels/label_features.pt'

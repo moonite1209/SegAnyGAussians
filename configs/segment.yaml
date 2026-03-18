@@ -2,3 +2,9 @@ defaults:
   - dataset: farsee
   - segment: farsee
   - _self_
+
+hydra:
+  run:
+    dir: ${segment.output_dir}
+  job:
+    chdir: false

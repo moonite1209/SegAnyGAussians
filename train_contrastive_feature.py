@@ -10,13 +10,12 @@
 #
 
 import os
-from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 from gaussian_renderer import render, render_contrastive_feature, render_with_depth, render_with_max_contributor
 import sys
 from scene import FeatureGaussianModel
-from saga_data import FeatureDataset, build_scene_index, move_sample_to_device
+from saga_data import FeatureDataset, build_feature_manifest, move_sample_to_device
 from utils.general_utils import safe_state
 from utils.image_utils import psnr
 from utils.loss_utils import l1_loss
@@ -110,26 +109,27 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     feature_gaussians.training_setup(opt)
     feature_gaussians.set_trainable(instance=True, semantic=False, geometry=False)
 
-    scene_index = build_scene_index(dataset)
+    artifacts_dir = getattr(dataset, "artifacts_dir", getattr(dataset, "segment_artifacts_path", None))
     masks_dir = getattr(dataset, "masks_path", None)
     labels_dir = getattr(dataset, "labels_path", None)
-    if not masks_dir or not labels_dir:
-        raise ValueError("`train_contrastive_feature.py` requires `masks_path` and `labels_path` in the dataset arguments")
-    label_features_path = Path(labels_dir) / "label_features.pt"
+    if artifacts_dir is None and (not masks_dir or not labels_dir):
+        raise ValueError(
+            "`train_contrastive_feature.py` requires either `artifacts_dir` or a compatible `masks_path`/`labels_path` layout"
+        )
+    scene_index = build_feature_manifest(
+        dataset,
+        artifacts_dir=artifacts_dir,
+        masks_dir=masks_dir,
+        labels_dir=labels_dir,
+    )
 
     train_dataset = FeatureDataset(
         scene_index,
-        segment_masks_dir=str(masks_dir),
-        segment_labels_dir=str(labels_dir),
-        segment_label_features_path=str(label_features_path),
         indices=scene_index.train_ids,
         resolution=getattr(dataset, "resolution", 1),
     )
     test_dataset = FeatureDataset(
         scene_index,
-        segment_masks_dir=str(masks_dir),
-        segment_labels_dir=str(labels_dir),
-        segment_label_features_path=str(label_features_path),
         indices=scene_index.test_ids,
         resolution=getattr(dataset, "resolution", 1),
     )
